@@ -1,6 +1,7 @@
 package com.github.ma1co.pmcademo.app;
 
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.view.View;
 import com.casklabs.ghostbuffer.ui.GhostBufferActivity;
@@ -36,6 +37,15 @@ public class MainActivity extends BaseActivity {
         cameraItem.setSelected(selected == 0);
         galleryItem.setSelected(selected == 1);
         exposureItem.setSelected(selected == 2);
+        // Selection uses camera keys rather than Android focus, so reveal it explicitly.
+        cameraItem.post(new Runnable() {
+            @Override public void run() {
+                View item = selected == 0 ? cameraItem : selected == 1 ? galleryItem : exposureItem;
+                Rect bounds = new Rect();
+                item.getDrawingRect(bounds);
+                item.requestRectangleOnScreen(bounds, true);
+            }
+        });
     }
 
     private void openCamera() {

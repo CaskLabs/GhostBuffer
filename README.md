@@ -1,6 +1,6 @@
 # GhostBuffer
 
-**GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible mirrorless cameras, specifically targeting the **Sony α5000 (ILCE-5000)**.
+**GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible cameras. It has been tested on the **Sony α5000 (ILCE-5000)**; other models have not yet been tested with GhostBuffer.
 
 > **Status (October 2026):** All 10 architectural and lifecycle remediations from the V1 review have been fully implemented and verified with 28 automated unit tests. The build produces a clean, runnable APK targeting Android 2.3.3 (Gingerbread API 10). See [V1 Review & Remediations](#v1-review--remediations) for detailed resolution of each finding.
 
@@ -211,12 +211,12 @@ cd GhostBuffer
 
 ---
 
-## Supported Cameras
+## Camera Compatibility
 
-Primary development target:
+Tested with GhostBuffer:
 - **Sony α5000 (ILCE-5000)**
 
-Other PMCA-compatible cameras:
+Other PMCA-compatible models have not yet been tested with GhostBuffer. Compatibility and available controls may vary by model, firmware and lens. Examples of other PMCA-compatible cameras include:
 - α6000 (ILCE-6000)
 - α7 series (ILCE-7, ILCE-7R, ILCE-7S, ILCE-7M2)
 - RX100 series (DSC-RX100M2, M3, M4, M5)

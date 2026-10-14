@@ -2,6 +2,7 @@ package com.casklabs.ghostbuffer.ui;
 
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
 import android.view.SurfaceHolder;
@@ -654,6 +655,15 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             "Center: Auto aperture; manual lenses use the lens ring", "Center: Auto ISO",
             "Center: Neutral 0 EV", "Center: Auto white balance" };
         exposureHint.setText(help[exposureSelected]);
+        exposurePanel.post(new Runnable() {
+            @Override public void run() {
+                if (!exposureVisible) return;
+                View row = exposureRows[exposureSelected];
+                Rect bounds = new Rect();
+                row.getDrawingRect(bounds);
+                row.requestRectangleOnScreen(bounds, true);
+            }
+        });
     }
 
     private boolean selectExposure(int direction) {
