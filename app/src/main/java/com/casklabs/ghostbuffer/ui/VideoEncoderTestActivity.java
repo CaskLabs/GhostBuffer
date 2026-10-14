@@ -25,7 +25,9 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     private final Object cameraGuard = new Object();
     private volatile boolean foreground, hasSurface, busy;
     private volatile int generation;
+    private volatile String lastLifecycleEvent;
     private boolean attempted, runPending;
+    private boolean liveMode;
     private Handler ui, worker;
     private HandlerThread workerThread;
     private SurfaceHolder surface;
@@ -46,7 +48,10 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
         workerThread.start();
         worker = new Handler(workerThread.getLooper());
         findViewById(R.id.encoder_test_run).setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { runTest(); }
+            @Override public void onClick(View view) { runTest(false); }
+        });
+        findViewById(R.id.encoder_test_live).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { runTest(true); }
         });
         findViewById(R.id.encoder_test_back).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { finish(); }
@@ -55,9 +60,10 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
 
     @Override protected void onResume() {
         super.onResume();
+        lastLifecycleEvent = "onResume";
         setColorDepth(false);
         foreground = true;
-        if (!attempted) runTest();
+        if (!attempted) runTest(false);
     }
 
     private void cancelAndRelease() {
@@ -74,6 +80,7 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     }
 
     @Override protected void onPause() {
+        lastLifecycleEvent = "onPause";
         foreground = false;
         cancelAndRelease(); // Native resources must close before BaseActivity releases the display.
         super.onPause();
@@ -92,11 +99,13 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {}
     @Override public void surfaceDestroyed(SurfaceHolder holder) {
         if (holder != surface) return;
+        lastLifecycleEvent = "surfaceDestroyed";
         hasSurface = false; cancelAndRelease();
     }
 
-    private void runTest() {
+    private void runTest(boolean live) {
         if (!foreground || busy) return;
+        liveMode = live;
         busy = true; attempted = true;
         runPending = true;
         status.setText("Preparing fresh preview surface...");
@@ -114,14 +123,21 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
 
     private void startTestWithSurface() {
         runPending = false;
-        status.setText("Testing native encoder...");
+        final boolean live = liveMode;
+        status.setText(live ? "Testing Full-HD live access..." : "Testing 6-second baseline...");
         details.setText("Checking recorder APIs and reported Full-HD profiles.\n\n"
-            + "If supported, this attempts a 2-second native recording on the SD card.\n"
-            + "A text report is saved in GHOSTBUF/PROBE.\n\nMENU / DEL cancels and returns.");
+            + (live ? "6-second recording with reads of its growing SD file into RAM.\nSD-to-RAM access, not direct encoder memory.\n"
+                : "6-second recording without live file reads.\nAfter completion, press RIGHT for the live-read comparison.\n")
+            + "Both modes log recorder state; stream-write listener disabled.\n"
+            + "Report: GHOSTBUF/PROBE\n\nCENTER Baseline  RIGHT Live  MENU Back");
         final int request = ++generation;
         final String device = deviceDetails();
-        final VideoEncoderProbe.Cancellation cancel = new VideoEncoderProbe.Cancellation() {
+        final VideoEncoderProbe.Cancellation cancel = new VideoEncoderProbe.DiagnosticCancellation() {
             @Override public boolean isCancelled() { return !foreground || !hasSurface || request != generation; }
+            @Override public String describeState() {
+                return "foreground=" + foreground + ", surface=" + hasSurface + ", generation=" + generation
+                    + ", request=" + request + ", lastLifecycleEvent=" + lastLifecycleEvent;
+            }
         };
         worker.post(new Runnable() {
             @Override public void run() {
@@ -130,7 +146,7 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
                 synchronized (cameraGuard) {
                     if (cancel.isCancelled()) return;
                     backend = new SonyVideoEncoderBackend(surface, cancel, ui);
-                    result = new VideoEncoderProbe(new GhostStorage()).run(backend, cancel, device);
+                    result = new VideoEncoderProbe(new GhostStorage(), 6000L, live).run(backend, cancel, device);
                     backend = null; // The probe closes its resources even after a failed native call.
                     report = readReport(result);
                 }
@@ -169,7 +185,11 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     }
 
     @Override protected boolean onEnterKeyDown() { return true; }
-    @Override protected boolean onEnterKeyUp() { runTest(); return true; }
+    @Override protected boolean onEnterKeyUp() { runTest(false); return true; }
+    @Override protected boolean onRightKeyDown() { return true; }
+    @Override protected boolean onRightKeyUp() { runTest(true); return true; }
+    @Override protected boolean onLeftKeyDown() { return true; }
+    @Override protected boolean onLeftKeyUp() { runTest(false); return true; }
     @Override protected boolean onMenuKeyDown() { return true; }
     @Override protected boolean onMenuKeyUp() { finish(); return true; }
     @Override protected boolean onDeleteKeyDown() { return true; }

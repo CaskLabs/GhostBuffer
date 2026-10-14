@@ -21,7 +21,12 @@
             <TextView android:id="@+id/encoder_test_run" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:layout_weight="1" android:minHeight="34dp"
                 android:padding="6dp" android:gravity="center" android:background="@drawable/menu_card"
-                android:layout_marginRight="6dp" android:text="CENTER Run again" android:textColor="#72DDD0"
+                android:layout_marginRight="6dp" android:text="CENTER Baseline" android:textColor="#72DDD0"
+                android:textSize="13sp" android:clickable="true" />
+            <TextView android:id="@+id/encoder_test_live" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:minHeight="34dp"
+                android:padding="6dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:layout_marginRight="6dp" android:text="RIGHT Live" android:textColor="#72DDD0"
                 android:textSize="13sp" android:clickable="true" />
             <TextView android:id="@+id/encoder_test_back" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:layout_weight="1" android:minHeight="34dp"

@@ -3,6 +3,7 @@ package com.casklabs.ghostbuffer.probe;
 import android.view.SurfaceHolder;
 import android.os.Handler;
 import com.sony.scalar.hardware.CameraEx;
+import com.casklabs.ghostbuffer.time.GhostTime;
 import java.io.Writer;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -23,6 +24,7 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
     private Object originalParameters;
     private boolean previewAttempted;
     private boolean parametersChanged;
+    private NativeRecorderEvents recordEvents;
 
     public SonyVideoEncoderBackend(SurfaceHolder surface, VideoEncoderProbe.Cancellation cancellation, Handler ui) {
         this.surface = surface; this.cancellation = cancellation; this.ui = ui;
@@ -60,6 +62,9 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
             }
         });
         call("setOnErrorListener", new Class<?>[] { errorListener }, callback);
+        // Keep the V4 stream-write listener out of both comparison modes: it never supplies bytes.
+        note(report, "Stream-write event listener: DISABLED for baseline/live comparison");
+        registerRecordEvents(caps, report);
         checkCancelled();
         CameraEx.OpenOptions options = new CameraEx.OpenOptions();
         options.setInheritSetting(true);
@@ -95,6 +100,29 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
         return caps;
     }
 
+    private void registerRecordEvents(final VideoEncoderProbe.Capabilities caps, Writer report) throws java.io.IOException {
+        recordEvents = caps.recordEvents;
+        try {
+            Class<?> listener = Class.forName("com.sony.scalar.media.MediaRecorder$OnRecordListener");
+            for (Method method : listener.getMethods()) note(report, "Record-state listener method: " + method.toString());
+            Object callback = Proxy.newProxyInstance(listener.getClassLoader(), new Class<?>[] { listener }, new InvocationHandler() {
+                @Override public Object invoke(Object proxy, Method method, Object[] args) {
+                    if ("onStarted".equals(method.getName()) && args != null && args.length > 0)
+                        caps.recordEvents.onStarted(Boolean.TRUE.equals(args[0]), GhostTime.uptimeMillis());
+                    if ("onStopped".equals(method.getName())) caps.recordEvents.onStopped(GhostTime.uptimeMillis());
+                    if ("hashCode".equals(method.getName())) return System.identityHashCode(proxy);
+                    if ("equals".equals(method.getName())) return args != null && args.length == 1 && proxy == args[0];
+                    if ("toString".equals(method.getName())) return "GhostBuffer record-state listener";
+                    return null;
+                }
+            });
+            call("setOnRecordListener", new Class<?>[] { listener }, callback);
+            caps.recordEvents.registered = true;
+            note(report, "Record-state event listener registered");
+        } catch (Exception e) { note(report, "Record-state listener unavailable: " + VideoEncoderProbe.describe(e)); }
+        catch (LinkageError e) { note(report, "Record-state listener unavailable: " + VideoEncoderProbe.describe(e)); }
+    }
+
     @Override public VideoEncoderProbe.Profile configure(VideoEncoderProbe.Profile profile) throws Exception {
         checkCancelled();
         Object parameters = call("getParameters");
@@ -110,10 +138,20 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
     }
 
     @Override public void prepare() throws Exception { checkCancelled(); call("prepare"); }
-    @Override public void start() throws Exception { checkCancelled(); call("start"); }
-    @Override public void stop() throws Exception { if (recorder != null) call("stop"); }
+    @Override public void start() throws Exception {
+        checkCancelled();
+        if (recordEvents != null) recordEvents.startRequested(GhostTime.uptimeMillis());
+        call("start");
+    }
+    @Override public void stop() throws Exception {
+        if (recorder == null || (recordEvents != null && recordEvents.stopped())) return;
+        if (recordEvents != null) recordEvents.stopRequested(GhostTime.uptimeMillis());
+        call("stop");
+    }
     @Override public void checkError() throws Exception {
         if (nativeError != null) throw new java.io.IOException(nativeError);
+        if (recordEvents != null && recordEvents.unexpectedStop())
+            throw new java.io.IOException("Native onStopped arrived before planned STOP; recording ended early");
     }
 
     @Override public void close() throws Exception {

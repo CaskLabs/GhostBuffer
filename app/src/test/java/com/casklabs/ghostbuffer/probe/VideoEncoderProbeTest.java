@@ -97,7 +97,7 @@ public class VideoEncoderProbeTest {
         assertTrue(encoder.prepared && encoder.started && encoder.stopped && encoder.closed);
         assertFalse(result.streamBufferAvailable);
         String text = report(result);
-        assertTrue(text.contains("Probe revision: 3"));
+        assertTrue(text.contains("Probe revision: 5"));
         assertTrue(text.contains("BEGIN: configure Full-HD profile: AVCHD | HD_1080 | 25p | FH | 16_9"));
         assertTrue(text.contains("Selected profile interpretation: nominal 1920x1080; decoded dimensions unverified"));
     }
@@ -213,6 +213,96 @@ public class VideoEncoderProbeTest {
         assertEquals("RECORDER_RAN", result.status);
         assertEquals(0, result.videoWidth);
         assertTrue(report(result).contains("Clip metadata unverified:"));
+    }
+    @Test public void liveAccessChecksBytesAndSpsBeforeBackendStop() throws Exception {
+        final File movieFolder = new File(root, "PRIVATE/AVCHD/BDMV/STREAM");
+        assertTrue(movieFolder.mkdirs());
+        encoder = new FakeEncoder() {
+            @Override public void start() throws IOException {
+                super.start();
+                java.io.FileOutputStream output = new java.io.FileOutputStream(new File(movieFolder, "00011.MTS"));
+                try { output.write(AvchdVideoInfoTest.transport(AvchdVideoInfoTest.fullHdSps(true), 192, true, false, true)); }
+                finally { output.close(); }
+            }
+        };
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 150, true).run(encoder, cancellation, "test");
+        assertEquals("FHD_CLIP_HEADER", result.status);
+        assertEquals("LIVE_SD_FHD_HEADER", result.liveAccess.status);
+        assertTrue(result.liveObservationValid);
+        String text = report(result);
+        assertTrue(text.indexOf("H.264 SPS parsed from RAM while recording") < text.indexOf("BEGIN: stop encoder"));
+        assertTrue(text.contains("Full-HD SPS read before STOP: true"));
+        assertTrue(encoder.stopped && encoder.closed);
+    }
+    @Test public void clipAppearingOnlyAtStopCannotCountAsLiveRamData() throws Exception {
+        recordClip(AvchdVideoInfoTest.transport(AvchdVideoInfoTest.fullHdSps(true), 192, false, false, false));
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 100, true).run(encoder, cancellation, "test");
+        assertEquals("FHD_CLIP_HEADER", result.status);
+        assertEquals("NO_LIVE_FILE", result.liveAccess.status);
+        assertEquals(0, result.liveAccess.bytesRead);
+        assertTrue(report(result).contains("Full-HD SPS read before STOP: false"));
+    }
+    @Test public void streamWriteEventsAloneNeverProveVideoByteAccess() throws Exception {
+        encoder.caps.streamBufferAvailable = false;
+        encoder.caps.streamEvents.registered = true;
+        encoder.caps.streamEvents.started.set(2); encoder.caps.streamEvents.completed.set(2);
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 50, true).run(encoder, cancellation, "test");
+        assertEquals("NO_LIVE_FILE", result.liveAccess.status);
+        assertEquals(0, result.liveAccess.bytesRead);
+        String text = report(result);
+        assertTrue(text.contains("Direct encoder RAM access: KNOWN_API_UNAVAILABLE"));
+        assertTrue(text.contains("Stream-write onStarted/onCompleted events: 2 / 2"));
+        assertTrue(text.contains("Stream-write notifications do not provide video bytes"));
+    }
+    @Test public void preparationFailureLeavesLiveAccessExplicitlyNotStarted() throws Exception {
+        encoder.failPrepare = true;
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 50, true).run(encoder, cancellation, "test");
+        assertEquals("ERROR", result.status); assertNull(result.liveAccess);
+        assertTrue(report(result).contains("Live SD access status: NOT_STARTED"));
+        assertFalse(encoder.started); assertTrue(encoder.closed);
+    }
+    @Test public void baselineModeDoesNotRunLiveDiscoveryOrReadSummary() throws Exception {
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 50, false).run(encoder, cancellation, "test");
+        String text = report(result);
+        assertNull(result.liveAccess);
+        assertTrue(text.contains("Test mode: BASELINE_NO_LIVE_READ"));
+        assertFalse(text.contains("Attempt live SD read-only open"));
+        assertFalse(text.contains("Live SD access status:"));
+    }
+    @Test public void stopStateFailureIsNotRetriedAndMakesLiveResultInconclusive() throws Exception {
+        final int[] stops = { 0 };
+        encoder = new FakeEncoder() {
+            @Override public void stop() { stops[0]++; throw new IllegalStateException("Recorder already stopped"); }
+        };
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 50, true).run(encoder, cancellation, "test");
+        assertEquals("ERROR", result.status); assertFalse(result.liveObservationValid);
+        assertEquals(1, stops[0]); assertTrue(encoder.closed);
+        String text = report(result);
+        assertTrue(text.contains("Live SD access status: NO_LIVE_FILE"));
+        assertTrue(text.contains("Live access conclusion: INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED"));
+    }
+    @Test public void nativeEarlyStopCannotProduceAValidNegativeLiveConclusion() throws Exception {
+        encoder = new FakeEncoder() {
+            @Override public void start() throws IOException {
+                super.start(); caps.recordEvents.startRequested(100); caps.recordEvents.onStopped(600);
+            }
+            @Override public void checkError() throws IOException {
+                if (caps.recordEvents.unexpectedStop()) throw new IOException("Native recording ended early");
+            }
+        };
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 100, true).run(encoder, cancellation, "test");
+        assertEquals("ERROR", result.status); assertFalse(result.liveObservationValid);
+        assertTrue(encoder.stopped && encoder.closed);
+        assertTrue(report(result).contains("Native stopped before planned STOP: true"));
+    }
+    @Test public void cancelledRecordingIsInconclusiveEvenIfCleanupStopSucceeded() throws Exception {
+        encoder = new FakeEncoder() {
+            @Override public void start() throws IOException { super.start(); cancelled = true; }
+        };
+        VideoEncoderProbe.Result result = new VideoEncoderProbe(storage, 100, true).run(encoder, cancellation, "test");
+        assertEquals("CANCELLED", result.status); assertTrue(result.recordingStopped);
+        assertFalse(result.liveObservationValid);
+        assertTrue(report(result).contains("INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED"));
     }
     @Test public void reportsUseUniqueUppercaseEightDotThreeNamesAndFindNewNativeMovie() throws Exception {
         final File movieFolder = new File(root, "PRIVATE/AVCHD/BDMV/STREAM");
