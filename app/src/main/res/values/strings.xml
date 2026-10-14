@@ -1,15 +1,15 @@
 <resources>
     <string name="app_name">GhostBuffer</string>
     <string name="title_activity_ghost_buffer">GhostBuffer</string>
-    <string name="title_activity_ghost_gallery">GhostBuffer Galerie</string>
-    <string name="status_buffering">PUFFER AKTIV</string>
-    <string name="status_saving">SPEICHERN...</string>
-    <string name="status_review">AUFNAHME GESPEICHERT</string>
-    <string name="status_error">FEHLER</string>
-    <string name="status_paused">PAUSIERT</string>
-    <string name="status_initializing">INITIALISIEREND...</string>
-    <string name="hint_camera">[Auslöser] Puffer sichern   [Play] Galerie   [Fn] Probe   [Del] Ende</string>
-    <string name="hint_gallery">[◄/►] Frame   [▲/▼] Sitzung   [Del] Löschen   [Menu] Kamera</string>
+    <string name="title_activity_ghost_gallery">GhostBuffer Gallery</string>
+    <string name="status_buffering">BUFFER ACTIVE</string>
+    <string name="status_saving">SAVING...</string>
+    <string name="status_review">CAPTURE SAVED</string>
+    <string name="status_error">ERROR</string>
+    <string name="status_paused">PAUSED</string>
+    <string name="status_initializing">INITIALIZING...</string>
+    <string name="hint_camera">[Shutter] Save buffer   [Play] Gallery   [Fn] Probe   [Del] Exit</string>
+    <string name="hint_gallery">[◄/►] Frame   [▲/▼] Session   [Del] Delete   [Menu] Camera</string>
 
     <!-- PMCADemo Diagnostic Titles preserved -->
     <string name="title_activity_main">PMCADemo</string>

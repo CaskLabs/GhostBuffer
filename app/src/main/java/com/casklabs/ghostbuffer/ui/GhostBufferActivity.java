@@ -222,7 +222,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     }
 
     private void runProbe() {
-        showCenterMessage("Führe Einzelprobe aus...", "#00FFFF");
+        showCenterMessage("Running single-frame probe...", "#00FFFF");
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -240,7 +240,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                         if (result.success) {
                             showCenterMessage("Probe OK: " + result.frameSize + " B\n" + result.jpegFile.getName(), "#00FF88");
                         } else {
-                            showCenterMessage("Probe FEHLER:\n" + result.message, "#FF4444");
+                            showCenterMessage("Probe ERROR:\n" + result.message, "#FF4444");
                         }
                         uiHandler.postDelayed(new Runnable() {
                             @Override
@@ -268,7 +268,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                     case SAVING:
                         tvStatus.setText(R.string.status_saving);
                         tvStatus.setTextColor(Color.parseColor("#FFFF00"));
-                        showCenterMessage("Puffer eingefroren!\nSpeichere auf SD-Karte...", "#FFFF00");
+                        showCenterMessage("Buffer frozen!\nSaving to SD card...", "#FFFF00");
                         break;
                     case REVIEW:
                         tvStatus.setText(R.string.status_review);
@@ -277,7 +277,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                     case ERROR:
                         tvStatus.setText(R.string.status_error);
                         tvStatus.setTextColor(Color.parseColor("#FF4444"));
-                        showCenterMessage(message != null ? message : "Fehler aufgetreten", "#FF4444");
+                        showCenterMessage(message != null ? message : "An error occurred", "#FF4444");
                         break;
                     case INITIALIZING:
                         tvStatus.setText(R.string.status_initializing);
@@ -289,7 +289,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                         break;
                     case IDLE:
                     default:
-                        tvStatus.setText("INAKTIV");
+                        tvStatus.setText("INACTIVE");
                         tvStatus.setTextColor(Color.parseColor("#888888"));
                         break;
                 }
@@ -303,7 +303,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             @Override
             public void run() {
                 float sec = coveredDurationMs / 1000.0f;
-                tvStats.setText(String.format(Locale.US, "%.1f s | %d Bilder | %.1f FPS", sec, frameCount, fps));
+                tvStats.setText(String.format(Locale.US, "%.1f s | %d frames | %.1f FPS", sec, frameCount, fps));
             }
         });
     }
@@ -313,7 +313,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
-                showCenterMessage(String.format(Locale.US, "Speichere Bild %d / %d ...", current, total), "#FFFF00");
+                showCenterMessage(String.format(Locale.US, "Saving frame %d / %d ...", current, total), "#FFFF00");
             }
         });
     }
@@ -324,7 +324,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             @Override
             public void run() {
                 showCenterMessage(
-                    String.format(Locale.US, "Gespeichert!\n%d Bilder in %s\n[Play] Galerie", manifest.getFrameCount(), sessionDir.getName()),
+                    String.format(Locale.US, "Saved!\n%d frames in %s\n[Play] Gallery", manifest.getFrameCount(), sessionDir.getName()),
                     "#00FF88"
                 );
 
@@ -347,7 +347,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
-                showCenterMessage("Fehler:\n" + error.getMessage(), "#FF4444");
+                showCenterMessage("Error:\n" + error.getMessage(), "#FF4444");
             }
         });
     }

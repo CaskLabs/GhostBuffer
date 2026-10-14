@@ -1,164 +1,164 @@
-# GhostBuffer: Entwicklungsplan für die Sony A5000
+# GhostBuffer: Development Plan for the Sony A5000
 
-Stand: 14. Oktober 2026. Grundlage: das vorhandene PMCADemo-Projekt und die unten verlinkten Primärquellen. Dieses Dokument beschreibt einen vorgeschlagenen Aufbau; es liegen keine eigenen Messungen oder Kompatibilitätstests auf einer A5000 vor.
+Date: 14 October 2026. Based on the existing PMCADemo project and the primary sources linked below. This document describes a proposed design; no first-hand measurements or compatibility tests on an A5000 were available when it was written.
 
-**Ziel:** Eine eigenständige Kamera-App hält fortlaufend komprimierte Livebild-JPEGs im Arbeitsspeicher. Ein Druck auf den Auslöser sichert die Bilder vor dem Druck auf die SD-Karte. Zunächst soll ein einziges nachweislich gültiges Livebild-JPEG auf der A5000 entstehen. Alle weiteren Arbeiten hängen von diesem Nachweis ab.
+**Goal:** A standalone camera app continuously keeps compressed live-view JPEGs in memory. Pressing the shutter saves the images preceding that press to the SD card. The first milestone is a single demonstrably valid live-view JPEG on the A5000. All subsequent work depends on that evidence.
 
-## 1. Was bereits belegt ist und was wir prüfen müssen
+## 1. Existing evidence and required checks
 
-Ein Entwickler beschreibt im OpenMemories-Framework-Issue vom 2. Juli 2021 einen funktionierenden JPEG-Livebildzugriff auf der **ILCE-6000** über `CameraSequence`. Genannt werden 640 × 480 Pixel, JPEGs unter 100 KB, Polling über `getPreviewSequenceFrames(1)` und ein direkter `ByteBuffer`. Der normale Android-PreviewCallback funktionierte in seinem Versuch nicht. Das ist ein Erfahrungsbericht für die A6000, keine A5000-Kompatibilitätszusage. [Live-preview-Bericht](https://github.com/ma1co/OpenMemories-Framework/issues/35).
+In an OpenMemories-Framework issue dated 2 July 2021, a developer describes working JPEG live-view access on the **ILCE-6000** through `CameraSequence`. The report mentions 640 × 480 pixels, JPEGs below 100 KB, polling through `getPreviewSequenceFrames(1)` and a direct `ByteBuffer`. The normal Android PreviewCallback did not work in that experiment. This is an A6000 experience report, not an A5000 compatibility guarantee. [Live-preview report](https://github.com/ma1co/OpenMemories-Framework/issues/35).
 
-Die Framework-Stubs enthalten `open`, `startPreviewSequence`, `getPreviewSequenceFrames`, `stopPreviewSequence` und `release`. Die Options-Stubs besitzen passende Vorschau- und JPEG-Schlüssel sowie `setOption`-Überladungen. Stubs beschreiben Signaturen; sie liefern weder die Sony-Implementierung noch einen Nachweis für eine bestimmte Kamera. [CameraSequence-Stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence.j), [Options-Stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence%24Options.j).
+The framework stubs contain `open`, `startPreviewSequence`, `getPreviewSequenceFrames`, `stopPreviewSequence` and `release`. The options stubs provide corresponding preview and JPEG keys and `setOption` overloads. Stubs describe signatures; they provide neither Sony's implementation nor proof of support on a specific camera. [CameraSequence stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence.j), [Options stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence%24Options.j).
 
-PMCA-RE ist ein Werkzeug auf dem Computer, unter anderem zur Installation eigener Apps auf unterstützten Kameras. OpenMemories: Framework ist eine Entwicklerbibliothek. OpenMemories: Tweak ist eine separate Kamera-App und kann für Diagnosezugang nützlich sein. Die Frage ist deshalb zunächst, ob auf der konkreten A5000 eigene Apps installiert und gestartet werden können; nicht, ob „PMCA-RE auf der Kamera installiert“ ist. Das PMCA-RE-Projekt verlangt für eigene Apps Kompatibilität mit Android 2.3.7. [PMCA-RE](https://github.com/ma1co/Sony-PMCA-RE), [Framework](https://github.com/ma1co/OpenMemories-Framework).
+PMCA-RE is a desktop tool that can, among other things, install custom apps on supported cameras. OpenMemories: Framework is a developer library. OpenMemories: Tweak is a separate camera app that can help with diagnostic access. The initial question is therefore whether custom apps can be installed and launched on the particular A5000, rather than whether “PMCA-RE is installed on the camera.” The PMCA-RE project requires custom apps to be compatible with Android 2.3.7. [PMCA-RE](https://github.com/ma1co/Sony-PMCA-RE), [Framework](https://github.com/ma1co/OpenMemories-Framework).
 
-**Offene Nachweise:** Klassen und Methoden auf der A5000; akzeptierte Optionen und Einheiten; veränderliche statt wiederholter Frames; tatsächliche Bildrate und Verzögerung; Speicherbudget einschließlich nativer Puffer; Auslöser-Ereignisse; SD-Schreibzugriff; Verhalten bei Autofokus und beim Verlassen der App.
+**Evidence still needed:** Classes and methods on the A5000; accepted options and units; changing rather than repeated frames; actual frame rate and latency; memory budget including native buffers; shutter events; SD write access; behavior during autofocus and when leaving the app.
 
-## 2. Umfang von Version 1.0
+## 2. Scope of version 1.0
 
-| Eigenschaft | Vorgesehener Startwert | Bedeutung |
+| Property | Proposed initial value | Meaning |
 | --- | --- | --- |
-| Auflösung | 640 × 480 | Aus der A6000-Erfahrung abgeleiteter Testwert |
-| Pufferdauer | 2,0 Sekunden | Zeitfenster; nicht einfach eine feste Anzahl Bilder |
-| Abrufrate | zunächst 1–2, später bis 10 Hz | Abrufrate und tatsächliche neue Frames getrennt messen |
-| Speicherung | JPEGs plus `manifest.json` | Keine unnötige Neukompression |
-| Auslösen | voller Druck auf Hardware-Auslöser | Genau eine Sicherung pro Druck |
-| Halb drücken | später Autofokus, sofern stabil | Erst mit manuellem Fokus die Datenpipeline prüfen |
-| Während des Speicherns | Puffer pausiert | Version 1 hat einen Sicherungsvorgang gleichzeitig |
-| Bildauswahl | eigene Galerie | Navigation über Kameratasten |
-| Normalfoto, RAW, Bewegungserkennung | spätere Erweiterungen | Nicht Teil des ersten Funktionsnachweises |
+| Resolution | 640 × 480 | Test value derived from the A6000 report |
+| Buffer duration | 2.0 seconds | Time window, not merely a fixed number of images |
+| Polling rate | Initially 1–2, later up to 10 Hz | Measure polling rate and actual new frames separately |
+| Storage | JPEGs plus `manifest.json` | No unnecessary recompression |
+| Trigger | Full press of the hardware shutter | Exactly one save per press |
+| Half press | Autofocus later, if stable | First validate the data pipeline with manual focus |
+| During saving | Buffer paused | Version 1 permits one save operation at a time |
+| Image selection | Custom gallery | Navigation through camera buttons |
+| Normal photo, RAW, motion detection | Later extensions | Outside the initial proof of operation |
 
-Ein VGA-JPEG hat rund 0,3 Megapixel. GhostBuffer 1.0 liefert damit Vorschau-Bilder für den verpassten Moment, keine hochauflösenden rückwirkenden Sensoraufnahmen. Ein später zusätzlich ausgelöstes Normalfoto liegt zeitlich nach dem Tastendruck.
+A VGA JPEG contains roughly 0.3 megapixels. GhostBuffer 1.0 therefore provides preview images of a missed moment, not retrospective high-resolution sensor captures. An additional normal photo triggered afterward occurs after the button press.
 
-Die App puffert nur, solange sie im Vordergrund läuft, Livebild und Kamera bereit sind und der Puffer aktiv ist. Nach einem Neustart existieren keine vergangenen Frames. Während Speichern und Bildauswahl besteht in dieser Version eine Aufnahmelücke.
+The app buffers only while it is in the foreground, live view and camera are ready, and the buffer is active. No past frames exist after a restart. This version has a capture gap during saving and image selection.
 
-## 3. Was wir aus PMCADemo übernehmen
+## 3. Components reused from PMCADemo
 
-Das lokale Projekt wurde für diesen Plan gelesen, aber nicht gebaut oder auf Hardware ausgeführt.
+The local project was read for this plan but was not built or run on hardware as part of writing it.
 
-| Vorhandene Datei | Verwendung | Erforderliche Anpassung |
+| Existing file | Use | Required changes |
 | --- | --- | --- |
-| `CameraActivity.java` | `CameraEx`, SurfaceView, Start des Livebilds | Sequence-Zugriff, Fehlerbehandlung und geordneter Lebenszyklus |
-| `BaseActivity.java` | Sony-Scancodes für Fokus, Auslöser und Navigation | Zustandsabhängige Behandlung und Schutz vor Wiederholungen |
-| `KeyEventActivity.java` | Diagnose tatsächlich gelieferter Tasten | Protokoll für A5000 erstellen |
-| `Logger.java` | Muster für Pfad über `Environment.getExternalStorageDirectory()` | Fehler sichtbar machen und laufende SD-Schreibzugriffe vermeiden |
-| `PlaybackActivity.java` | Beispiel für Bildlisten | Eigene Dateigalerie statt Abhängigkeit von Sonys Medienindex |
-| `BitmapUtil.java` / `ScalingBitmapView.java` | Bildanzeige | Kleine Vorschauen und begrenzte Bitmap-Lebensdauer |
-| `AndroidManifest.xml` | Kamera- und Speicherberechtigungen | Eigene Activities und auf den Umfang reduzierte Berechtigungen |
+| `CameraActivity.java` | `CameraEx`, SurfaceView, live-view startup | Sequence access, error handling and orderly lifecycle |
+| `BaseActivity.java` | Sony scan codes for focus, shutter and navigation | State-dependent handling and repeat protection |
+| `KeyEventActivity.java` | Diagnose actual button events | Produce an A5000 test log |
+| `Logger.java` | Path pattern using `Environment.getExternalStorageDirectory()` | Make errors visible and avoid continuous SD writes |
+| `PlaybackActivity.java` | Image-list example | Custom file gallery instead of reliance on Sony's media index |
+| `BitmapUtil.java` / `ScalingBitmapView.java` | Image display | Small previews and bounded bitmap lifetimes |
+| `AndroidManifest.xml` | Camera and storage permissions | Custom activities and permissions limited to the scope |
 
-`CameraActivity` ruft bei vollem Druck bereits `takePicture` auf. In GhostBuffer 1.0 wird dieser Ablauf durch das Einfrieren des Puffers ersetzt. Der vorhandene `cancelTakePicture`-Aufruf beim Loslassen gehört dann ebenfalls nicht in diesen Modus.
+`CameraActivity` already calls `takePicture` on a full press. GhostBuffer 1.0 replaces that flow with freezing the buffer. The existing `cancelTakePicture` call on release also does not belong in this mode.
 
-Der aktuelle Build nutzt Android Gradle Plugin 2.2.3, SDK-Level 10, Build Tools 25.0.2, Java-6-Kompatibilität, JCenter und Framework-SNAPSHOTs. Ein Gradle-Wrapper fehlt im Checkout. Ein reproduzierbarer Build ist deshalb ein eigener erster Arbeitsschritt.
+At the time of this plan, the build used Android Gradle Plugin 2.2.3, SDK level 10, Build Tools 25.0.2, Java 6 compatibility, JCenter and framework SNAPSHOTs. The checkout lacked a Gradle wrapper. Establishing a reproducible build was therefore a separate first step.
 
-## 4. Architektur und Verantwortlichkeiten
+## 4. Architecture and responsibilities
 
 ```mermaid
 flowchart LR
-    Sony[CameraEx und CameraSequence] --> Reader[FrameReader]
-    Reader --> Ring[Zeitlich begrenzter JPEG-Ringpuffer]
-    Keys[Hardware-Auslöser] --> Controller[CaptureController]
-    Controller -->|einfrieren| Ring
-    Ring -->|unveränderlicher Snapshot| Writer[CaptureWriter]
-    Writer --> SD[SD-Karte: JPEGs und Manifest]
-    SD --> Gallery[Eigene Galerie]
-    Sony --> Surface[Livebild auf SurfaceView]
+    Sony[CameraEx and CameraSequence] --> Reader[FrameReader]
+    Reader --> Ring[Time-bounded JPEG ring buffer]
+    Keys[Hardware shutter] --> Controller[CaptureController]
+    Controller -->|freeze| Ring
+    Ring -->|immutable snapshot| Writer[CaptureWriter]
+    Writer --> SD[SD card: JPEGs and manifest]
+    SD --> Gallery[Custom gallery]
+    Sony --> Surface[Live view on SurfaceView]
 ```
 
-Das Livebild bleibt möglichst auf der Kamerasurface. Wir dekodieren nicht zusätzlich jeden Frame für die Hauptanzeige.
+Keep live view on the camera surface where possible. Do not additionally decode every frame for the main display.
 
-| Baustein | Aufgabe |
+| Component | Responsibility |
 | --- | --- |
-| `GhostBufferActivity` | Oberfläche, Surface-Lebenszyklus und Kamera-Tasten |
-| `SonyPreviewBackend` | Sony-Aufrufe und Prüfung der zur Laufzeit vorhandenen API |
-| `FrameReader` | Getakteter Abruf, Validierung, Kopie, Freigabe der DeviceMemory-Objekte |
-| `FrameRingBuffer` | Begrenzung nach Alter, Anzahl und Bytes; Einfrieren |
-| `CaptureController` | Zustandswechsel, Auslöser-Zeitpunkt und Besitz der Puffer |
-| `CaptureWriter` | Hintergrundspeicherung und erkennbare unvollständige Sitzungen |
-| `CaptureManifest` | Dateiliste, Zeitbezug, Messwerte und Diagnoseinformationen |
-| `GhostGalleryActivity` | Auswahl und Anzeige aus GhostBuffer-Verzeichnissen |
-| `Diagnostics` | Messwerte im RAM sammeln und gesammelt exportieren |
-| `FakePreviewBackend` | Reproduzierbare Frames und Fehler ohne Kamera für Logiktests |
+| `GhostBufferActivity` | UI, surface lifecycle and camera buttons |
+| `SonyPreviewBackend` | Sony calls and runtime API availability checks |
+| `FrameReader` | Scheduled polling, validation, copying and releasing DeviceMemory objects |
+| `FrameRingBuffer` | Bounds by age, count and bytes; freezing |
+| `CaptureController` | State transitions, trigger time and buffer ownership |
+| `CaptureWriter` | Background saving and recognizable incomplete sessions |
+| `CaptureManifest` | File list, time reference, measurements and diagnostics |
+| `GhostGalleryActivity` | Selection and display from GhostBuffer directories |
+| `Diagnostics` | Collect measurements in RAM and export them in batches |
+| `FakePreviewBackend` | Reproducible frames and errors without a camera for logic tests |
 
-Vorgesehene Zustände: `IDLE → INITIALIZING → BUFFERING → FROZEN → SAVING → REVIEW`. Eine bestätigte Rückkehr aus REVIEW startet einen neuen Puffer. `PAUSED` bildet den Verlust des Vordergrunds ab; `ERROR` zeigt einen konkreten Fehler mit erneuter Startmöglichkeit.
+Proposed states: `IDLE → INITIALIZING → BUFFERING → FROZEN → SAVING → REVIEW`. A confirmed return from REVIEW starts a new buffer. `PAUSED` represents loss of foreground status; `ERROR` shows a specific error with an option to restart.
 
-Kamera- und Sequence-Zugriffe werden serialisiert. SD-Dateischreiben läuft separat. Die UI führt keine blockierenden Frame-Leseoperationen und keine JPEG-Dateischreibvorgänge aus. Die Zustands- und Pufferübergaben bekommen eine klar definierte kurze Synchronisation.
+Serialize camera and sequence access. SD file writing runs separately. The UI performs no blocking frame reads or JPEG writes. State and buffer handoffs use clearly defined, short synchronization.
 
-## 5. Etappe 0: Projekt und Kamera vorbereiten
+## 5. Stage 0: Prepare the project and camera
 
-**Arbeitsschritte**
+**Steps**
 
-1. Modell `ILCE-5000`, Firmware, vorhandene Apps und Installationsmöglichkeit erfassen. SD-Karte und freien Speicher feststellen. Die konkreten Kameraangaben fehlen noch; sie sind Voraussetzung für den Hardwaretest, nicht für diesen Plan.
-2. PMCA-RE-Version und Installationsweg dokumentieren. Den normalen App-Installationsweg verwenden; Firmware-Updater- und Service-Modus gehören nicht zum vorgesehenen App-Ansatz. Auf macOS zunächst USB-Erkennung prüfen und bei Problemen die dokumentierten Host-Anforderungen untersuchen.
-3. PMCADemo unverändert reproduzierbar bauen. Geeignete JDK-/Gradle-Kombination ermitteln, Wrapper ergänzen, benötigte alte SDK-Werkzeuge bereitstellen und nicht mehr erreichbare Abhängigkeiten ersetzen oder lokal aus festgelegten Quellen bauen.
-4. Framework und Stubs auf einen geprüften Commit fixieren. Stubs nur für die Kompilierung bereitstellen, nicht als Kamera-Implementierung in die APK packen. [Einbindungsbeispiel des Frameworks](https://github.com/ma1co/OpenMemories-Framework#how-to-use).
-5. APK installieren, starten, Livebild und Tastendiagnose prüfen. Paket und Ablauf einschließlich möglicher Verpackungsschritte für den ausgewählten Installer dokumentieren.
-6. Für GhostBuffer eine eigene Application-ID, einen eigenen Namen und einen eigenen Speicherordner vorsehen, sodass PMCADemo als Diagnose-App erhalten bleibt. MIT-Hinweise übernommener Quellen erhalten.
+1. Record model `ILCE-5000`, firmware, existing apps and installation capability. Check the SD card and free space. Specific camera details are still missing; they are prerequisites for hardware testing, not for this plan.
+2. Document PMCA-RE version and installation method. Use the normal app installation path; firmware updater and service modes are outside the intended app approach. On macOS, check USB detection first and investigate documented host requirements if problems occur.
+3. Build unchanged PMCADemo reproducibly. Determine a suitable JDK/Gradle combination, add the wrapper, provide the required old SDK tools and replace unavailable dependencies or build them locally from pinned sources.
+4. Pin framework and stubs to a verified commit. Provide stubs for compilation only; do not package them as camera implementations in the APK. [Framework integration example](https://github.com/ma1co/OpenMemories-Framework#how-to-use).
+5. Install and launch the APK; check live view and button diagnostics. Document the package and workflow, including any packaging steps required by the selected installer.
+6. Give GhostBuffer its own application ID, name and storage folder so PMCADemo can remain available as a diagnostic app. Preserve MIT notices in reused sources.
 
-**Ergebnis:** Reproduzierbares APK, dokumentierter Installationsweg und ein Hardwareprotokoll. Ohne gestartete Kamera-App ist der nächste Abschnitt noch kein ausführbarer Hardwaretest.
+**Result:** Reproducible APK, documented installation method and a hardware test log. Until a camera app has successfully launched, the next section is not yet an executable hardware test.
 
-## 6. Etappe 1: GhostBuffer Probe – ein echtes JPEG
+## 6. Stage 1: GhostBuffer Probe – one real JPEG
 
-Die Probe bekommt nur Livebild, Status, eine Taste zum Lesen eines Frames und Diagnoseexport.
+The probe provides only live view, status, a button to read one frame and diagnostic export.
 
-**Ablauf**
+**Procedure**
 
-1. Zur Laufzeit benötigte Klassen, Signaturen und Optionen prüfen. Fehlende Klassen oder Methoden mit klarer Meldung beenden. Der Sony-Zugriff liegt hinter einem Adapter, damit eine fehlende API nicht schon die ganze App beim Laden der Startoberfläche scheitern lässt.
-2. Auf eine gültige Surface warten, `CameraEx` öffnen, Livebild binden und starten. Vorhandene Surface bei Wiederaufnahme und Surface-Verlust ausdrücklich behandeln.
-3. `CameraSequence.open(cameraEx)` aufrufen und Optionen kontrolliert setzen. Erste Testkombination: Breite 640, Höhe 480, Formatwert 256, maximal ein Frame. Für die Sequenzrate kann zunächst die im Bericht genannte Einstellung 30000 geprüft werden; die App ruft anfangs nur 1–2-mal pro Sekunde ab. Optionen und akzeptierte Werte protokollieren. Einheiten und Kompressionsparameter nicht aus den Namen erraten.
-4. `getPreviewSequenceFrames(1)` auf dem Kamera-Arbeiter aufrufen. Null, leere Arrays, ungültige Objekte und unerwartete Typen berücksichtigen. Auch überraschend weitere zurückgegebene Speicherobjekte geordnet freigeben.
-5. Einen direkten ByteBuffer einmal anlegen. Mit einer begrenzten Kapazität beginnen, beispielsweise 128 KiB. Größe vor dem Lesen prüfen; größere Frames melden und verwerfen. Eine kontrollierte Vergrößerung ist erst nach Untersuchung des Speicherbudgets sinnvoll.
-6. Für jeden Lesevorgang Buffer zurücksetzen, Länge und Rückgabewert prüfen und Position/Limit ausdrücklich korrekt setzen. Die genaue Bedeutung des Rückgabewertes auf Hardware ermitteln. Sony-Speicher immer im `finally` freigeben. Keine DeviceMemory-Referenz im Ring behalten. [DeviceBuffer-Signaturen](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/DeviceBuffer.j).
-7. JPEG-Bytes in einen eigenen Arraybereich kopieren. JPEG-Kennung prüfen und die Datei am Computer vollständig dekodieren. Ein SOI-Marker allein beweist noch kein gültiges Bild.
-8. Nach beendeter Einzelprobe JPEG und Diagnosebericht nach `<SD>/GHOSTBUFFER/probe/` schreiben. Dateifehler anzeigen; nicht wie im Demo-Code stillschweigend ignorieren.
-9. Zehn getrennte Abrufe mit bewegtem Motiv durchführen. Sequenz stoppen und Ressourcen geordnet freigeben. Die App erneut starten und die Probe wiederholen.
+1. Check required classes, signatures and options at runtime. Stop with a clear message if classes or methods are missing. Put Sony access behind an adapter so a missing API does not crash the entire app while loading the initial UI.
+2. Wait for a valid surface, open `CameraEx`, bind live view and start it. Explicitly handle an existing surface on resume and surface loss.
+3. Call `CameraSequence.open(cameraEx)` and configure options deliberately. Initial test combination: width 640, height 480, format value 256, maximum one frame. Initially test the reported sequence-rate setting of 30000; the app polls only 1–2 times per second at first. Log options and accepted values. Do not infer units or compression parameters from their names.
+4. Call `getPreviewSequenceFrames(1)` on the camera worker. Handle null, empty arrays, invalid objects and unexpected types. Also release any unexpectedly returned additional memory objects in an orderly way.
+5. Allocate a direct ByteBuffer once. Begin with a bounded capacity, such as 128 KiB. Check size before reading; report and discard larger frames. Consider controlled growth only after investigating the memory budget.
+6. Reset the buffer for every read, check length and return value, and explicitly set position/limit correctly. Determine the exact meaning of the return value on hardware. Always release Sony memory in `finally`. Do not retain DeviceMemory references in the ring. [DeviceBuffer signatures](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/DeviceBuffer.j).
+7. Copy JPEG bytes into an owned array region. Check the JPEG signature and fully decode the file on a computer. An SOI marker alone does not prove a valid image.
+8. After the single-frame probe finishes, write the JPEG and diagnostic report to `<SD>/GHOSTBUFFER/probe/`. Display file errors instead of silently ignoring them as the demo code does.
+9. Perform ten separate reads with a moving subject. Stop the sequence and release resources in order. Restart the app and repeat the probe.
 
-**Abnahme:** Mindestens zehn dekodierbare JPEGs aus zwei Starts, plausible tatsächliche Abmessungen und sichtbare Motivänderungen. Der Bericht enthält Firmware, gesetzte Optionen, Dateigrößen, Abrufdauer und alle Fehler. Normale Kamerabedienung funktioniert nach dem Verlassen wieder.
+**Acceptance:** At least ten decodable JPEGs across two starts, plausible actual dimensions and visible subject changes. The report includes firmware, configured options, file sizes, read duration and all errors. Normal camera operation works again after leaving the app.
 
-**Entscheidung:** Fehlt die API oder liefert keine getestete Konfiguration gültige veränderliche Frames, wird die Entwicklung des Kamera-Puffers zunächst angehalten. Options-, Berechtigungs- und Lebenszyklusfehler begrenzt untersuchen. Ein externer WLAN-/HDMI-Puffer wäre eine gesonderte Lösung mit anderem Bedienkonzept.
+**Decision:** If the API is missing or no tested configuration provides valid changing frames, pause development of the camera buffer. Investigate option, permission and lifecycle errors within a bounded effort. An external Wi-Fi/HDMI buffer would be a separate solution with a different interaction model.
 
-## 7. Etappe 2: GhostBuffer Core – zeitlich korrekter Ringspeicher
+## 7. Stage 2: GhostBuffer Core – a temporally correct ring buffer
 
-**Frame-Daten**
+**Frame data**
 
-Ein Slot enthält JPEG-Array, gültige Länge, fortlaufende Nummer, monotone Zeit beim Abrufbeginn und beim Abrufende sowie optional eine Prüfsumme. Eine Kamerazeit dient zusätzlich als lesbare Sitzungszeit, nicht zur Berechnung der Pufferdauer. Beispielhafte Struktur: `byte[] jpeg; int length; long sequence; long readStartMs; long readEndMs`.
+A slot contains a JPEG array, valid length, sequence number, monotonic read-start and read-end times, and optionally a checksum. Camera wall-clock time additionally provides a readable session timestamp; it is not used to calculate buffer duration. Example structure: `byte[] jpeg; int length; long sequence; long readStartMs; long readEndMs`.
 
-Die Zeitstempel beschreiben zunächst den Zugriff der App. Sie sind **keine nachgewiesenen Belichtungszeitpunkte**. Die Stubs bieten zwar `getPreviewSequenceFrameInfo`, beschreiben die Detaildaten aber nur als Bytearray. Ohne verifiziertes Format wird daraus kein Sensorzeitstempel abgeleitet. [FrameInfo-Stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence%24PreviewSequenceFrameInfo.j).
+These timestamps initially describe app access. They are **not verified exposure times**. The stubs provide `getPreviewSequenceFrameInfo`, but describe the detailed data only as a byte array. Do not derive sensor timestamps without a verified format. [FrameInfo stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraSequence%24PreviewSequenceFrameInfo.j).
 
-**Speicherbudget**
+**Memory budget**
 
-20 Bilder × durchschnittlich 80 KB ergeben rund 1,6 MB reine komprimierte Nutzdaten. Dazu kommen Array-Kapazitäten, Direktpuffer, Metadaten, UI, Kamera-Ressourcen und später Bitmaps. Der Gesamtbedarf ist also höher.
+20 images × an average of 80 KB yield roughly 1.6 MB of compressed payload. Array capacities, direct buffers, metadata, UI, camera resources and eventually bitmaps add to that amount. Total usage is therefore higher.
 
-Für einen ersten begrenzten Pool wären 24 Slots mit je 128 KiB rund 3 MiB reservierte JPEG-Kapazität, zusätzlich ein Direktpuffer und die übrigen Ressourcen. Diese Werte sind Entwurfswerte. Vor der endgültigen Wahl Heap-Grenze, Ausgangsverbrauch und Verhalten der nativen Speicherbereiche auf der A5000 messen. Ein einzelnes vollständig dekodiertes VGA-Bild kann bei 32 Bit pro Pixel rund 1,2 MB benötigen; daher keine vollständige Bitmap-Liste im Puffer halten.
+An initial bounded pool of 24 slots at 128 KiB each would reserve roughly 3 MiB of JPEG capacity, plus a direct buffer and other resources. These are design values. Before choosing final values, measure heap limits, baseline usage and native memory behavior on the A5000. A single fully decoded VGA image at 32 bits per pixel can require roughly 1.2 MB; do not retain a full bitmap list in the buffer.
 
-**Pufferregeln**
+**Buffer rules**
 
-- Altersgrenze und Kapazität gleichzeitig anwenden. Für ein Fenster T und eine angenommene maximale Rate f mindestens `ceil(T × f) + 1` Slots als Planungsgrundlage verwenden; zusätzliche Slots bleiben ebenfalls durch ein Bytebudget begrenzt.
-- Vor dem Auslöser fortlaufend Bilder entfernen, die außerhalb des aktuellen Zeitfensters liegen. Beim Einfrieren erneut gegen den Triggerzeitpunkt filtern, auch wenn inzwischen keine Frames mehr ankommen.
-- Bei Speicherdruck ältere Slots entfernen oder die konfigurierte Dauer reduzieren. Die UI meldet die tatsächlich verfügbare Abdeckung.
-- Nach dem Start den Füllstand anzeigen. Frühes Auslösen darf die vorhandenen Bilder sichern, muss aber einen unvollständigen Vorlauf kennzeichnen.
-- Beim Ausbleiben neuer Frames keinen gefüllten Puffer als aktuelle Aufnahmebereitschaft anzeigen.
+- Apply age and capacity limits together. For a window T and an assumed maximum rate f, use at least `ceil(T × f) + 1` slots as a planning basis; additional slots remain subject to a byte budget.
+- Continuously remove images outside the current time window before triggering. Filter again against the trigger time when freezing, even if frames have stopped arriving.
+- Under memory pressure, evict older slots or reduce the configured duration. The UI reports actual available coverage.
+- Show fill level after startup. An early trigger may save available images but must indicate incomplete pre-trigger coverage.
+- If new frames stop arriving, do not display a full buffer as current capture readiness.
 
-**Taktung und Messung**
+**Scheduling and measurement**
 
-Mit 2, 5 und 10 Abrufen pro Sekunde testen. Nach monotonen Zielzeiten takten; bei Verzögerungen Zeitpunkte überspringen, statt durch hektisches Nachholen Lastspitzen zu erzeugen. Gewünschte Sequenzrate, Pollingrate, erfolgreiche Abrufe und nachweislich neue Motivframes getrennt behandeln.
+Test at 2, 5 and 10 polls per second. Schedule against monotonic target times; skip missed times after delays instead of creating load spikes by rapidly catching up. Distinguish desired sequence rate, polling rate, successful reads and demonstrably new subject frames.
 
-Pro Lauf erfassen: erfolgreiche Frames/s, leere und fehlerhafte Abrufe, JPEG-Größen, Abrufzeiten mit Median und hohem Perzentil, größte Lücke, aktuelle Zeitabdeckung und Speichertrend. Mit bewegtem Motiv Wiederholungen prüfen. Gleiche JPEGs bei einem statischen Motiv allein beweisen keine fehlerhafte Pipeline. Keine Diagnosezeile pro Frame synchron auf SD schreiben.
+For each run, record successful frames/s, empty and failed reads, JPEG sizes, median and high-percentile read times, largest gap, current time coverage and memory trend. Use a moving subject to check repeats. Identical JPEGs of a static subject alone do not prove a broken pipeline. Do not synchronously write a diagnostic line to SD for every frame.
 
-**Abnahme:** Zehn Minuten bei gewählter Konfiguration ohne wachsenden Speichertrend, ANR oder dauerhaften Abrufstillstand; korrekte chronologische Reihenfolge und begrenzte Bytebelegung. Ziel sind 10 FPS. Falls nur eine niedrigere Rate stabil ist, wird sie als gemessener Standard verwendet. Ein sinnvoller erster Produktwert könnte bei mindestens 5 unterschiedlichen Frames/s liegen; das ist eine vorgeschlagene Akzeptanzgrenze, kein Hardwarebefund.
+**Acceptance:** Ten minutes at the chosen configuration without a growing memory trend, ANR or persistent read stall; correct chronological order and bounded byte usage. The target is 10 FPS. If only a lower rate is stable, use that measured rate as the default. At least 5 distinct frames/s could be a useful initial product threshold; this is a proposed acceptance criterion, not a hardware finding.
 
-## 8. Etappe 3: GhostBuffer Capture – Auslösen und konsistent sichern
+## 8. Stage 3: GhostBuffer Capture – trigger and save consistently
 
-**Grenze beim Tastendruck**
+**Boundary at the button press**
 
-Beim ersten gültigen vollen Druck hält der Controller einen monotonen Triggerzeitpunkt fest und friert den Ring atomar ein. Alle neuen Inserts werden für diese Puffergeneration gesperrt. Bereits kopierte JPEG-Slots werden an den Writer übergeben; sie werden bis Abschluss oder bewusstem Verwerfen nicht wiederverwendet.
+On the first valid full press, the controller records a monotonic trigger time and atomically freezes the ring. Block all new inserts for that buffer generation. Transfer already copied JPEG slots to the writer; do not reuse them until completion or deliberate discard.
 
-Ein gerade laufender Sony-Abruf darf noch geordnet enden. Er darf den eingefrorenen Snapshot nicht verändern. Als konservative Regel werden nur Frames berücksichtigt, deren Abruf vor dem aufgezeichneten Trigger abgeschlossen war. Ob ein später abgeholter Frame tatsächlich vor dem Druck belichtet wurde, ist ohne Kamerazeitstempel unbekannt.
+An ongoing Sony read may finish in order. It must not modify the frozen snapshot. As a conservative rule, include only frames whose read completed before the recorded trigger. Without camera timestamps, whether a frame fetched later was exposed before the press is unknown.
 
-Das Fenster lautet zunächst `triggerMs − bufferDurationMs ≤ readEndMs ≤ triggerMs`. Es beschreibt App-Abrufzeiten. Eingabeverzögerung und Kamerapipeline-Latenz werden separat gemessen, beispielsweise mit einer sichtbar laufenden Uhr und Bewegung im Bild. Absolute Zusagen zum Belichtungszeitpunkt erfordern weitere Hardwarebelege.
+The initial window is `triggerMs − bufferDurationMs ≤ readEndMs ≤ triggerMs`. It describes app read times. Measure input delay and camera pipeline latency separately, for example with a visibly running clock and motion in the scene. Absolute claims about exposure timing require further hardware evidence.
 
-Gedrückthalten und Key-Repeats erzeugen keine zweite Sitzung. Erst Loslassen und erneuter gültiger Druck ermöglichen eine neue Sicherung. Fokus-Tasten und Schließen der App bekommen zustandsabhängige Regeln. Für die ersten Versuche manuellen Fokus verwenden, danach Autofokus separat prüfen.
+Holding the shutter and key repeats must not create a second session. Only release followed by another valid press permits another save. Apply state-dependent rules to focus buttons and app exit. Use manual focus for initial experiments, then test autofocus separately.
 
-**Dateiformat**
+**File format**
 
 ```text
 <SD>/GHOSTBUFFER/
@@ -173,80 +173,80 @@ Gedrückthalten und Key-Repeats erzeugen keine zweite Sitzung. Erst Loslassen un
   probe/
 ```
 
-Verzeichnisse kollisionsfrei anlegen und vorhandene Dateien niemals überschreiben. Während des Schreibens fehlt `COMPLETE`. JPEGs zunächst temporär schreiben, schließen und innerhalb desselben Dateisystems umbenennen; Ergebnisse prüfen. Das Manifest zuletzt vervollständigen, Dateien soweit verfügbar synchronisieren und danach den Abschlussmarker setzen. So erkennt die Galerie unterbrochene Sitzungen. Der Marker ist keine Garantie gegen jede Stromunterbrechung oder SD-Controller-Eigenheit.
+Create directories without collisions and never overwrite existing files. `COMPLETE` is absent while writing. First write JPEGs to temporary files, close them and rename within the same filesystem; check results. Finish the manifest last, sync files where supported and then create the completion marker. This lets the gallery recognize interrupted sessions. The marker does not guarantee protection against every power loss or SD controller behavior.
 
-Das Manifest enthält Schema- und App-Version, Modell/Firmware, lesbare Kamerazeit, monotone Triggerzeit innerhalb der Sitzung, gewünschte und tatsächliche Pufferdauer, Messrate, Auflösung, gesetzte Optionen und eine geordnete Dateiliste. Je Frame werden Größe und Zeitdifferenz zum Trigger gespeichert, optional zusätzlich eine Prüfsumme. Belichtungsdaten oder EXIF-Werte nur aufnehmen, wenn tatsächlich verfügbar; keine Werte erfinden.
+The manifest includes schema and app versions, model/firmware, readable camera time, monotonic trigger time within the session, desired and actual buffer duration, measured rate, resolution, configured options and an ordered file list. Record size and time offset from the trigger for each frame, optionally adding a checksum. Include exposure data or EXIF values only when actually available; do not invent values.
 
-**Fehlerverhalten**
+**Error behavior**
 
-Vorher freien Speicher, Schreibbarkeit und Kartenstatus prüfen. Während des Schreibens alle Fehler trotzdem behandeln. Bei Kartenentnahme oder voller Karte bleibt die Sitzung sichtbar unvollständig. Den eingefrorenen RAM-Snapshot möglichst bis zum Wiederholungsversuch behalten. Vor dem Rückkehr zum Puffern muss der Nutzer einen fehlgeschlagenen Snapshot bewusst verwerfen oder erfolgreich sichern. Bei Prozessende kann ungesicherter RAM verloren gehen.
+Check free space, writability and card status beforehand. Still handle every error during writing. Card removal or a full card leaves the session visibly incomplete. Keep the frozen RAM snapshot for a retry where possible. Before returning to buffering, the user must deliberately discard a failed snapshot or save it successfully. Unsaved RAM can be lost when the process ends.
 
-**Abnahme:** 50 Sicherungen mit unterschiedlichem Füllstand und Druckdauer; keine doppelten Trigger, keine vertauschten oder nachträglich überschriebenen Frames. Alle vollständigen Sitzungen am Computer dekodierbar. Fehlende, volle oder entfernte Karte führt zu sichtbarem Fehler und keiner falschen Erfolgsmeldung. Ein kontrolliert unterbrochener Schreibvorgang wird beim nächsten Start als unvollständig erkannt.
+**Acceptance:** 50 saves with different fill levels and press durations; no duplicate triggers, reordered frames or subsequent overwrites. All complete sessions decode on a computer. A missing, full or removed card produces a visible error and no false success message. A deliberately interrupted write is recognized as incomplete on the next launch.
 
-## 9. Etappe 4: Oberfläche und Galerie
+## 9. Stage 4: UI and gallery
 
-Die Aufnahmeansicht zeigt Livebild, Status, Ziel- und gemessene Rate, verfügbare Pufferdauer und Frameanzahl. Beispielsweise: `PUFFER AKTIV | 1,8 s | 18 Bilder | 9,5 FPS`. Gemessene Werte erst nach ausreichender Beobachtung anzeigen; bis dahin „wird gemessen“.
+The capture view shows live view, status, target and measured rate, available buffer duration and frame count. For example: `BUFFER ACTIVE | 1.8 s | 18 frames | 9.5 FPS`. Display measured values only after sufficient observation; until then show “measuring.”
 
-Vorgesehene Tastenbelegung: voller Auslöser sichert; halber Auslöser fokussiert nach erfolgreichem AF-Test; Richtungstasten wählen in der Galerie; Mitte öffnet das Bild oder startet den nächsten Puffer; die verifizierte Zurück-/Löschtaste verlässt den aktuellen Bildschirm. Endgültig nur tatsächlich vorhandene A5000-Tasten belegen.
+Proposed controls: full shutter press saves; half press focuses after successful AF testing; directional buttons select in the gallery; center opens the image or starts the next buffer; the verified back/delete button leaves the current screen. Final mappings must use only buttons actually present on the A5000.
 
-Beim Speichern einen Fortschritt zeigen und weitere Trigger sperren. Eine zweisekündige Mindestfüllung ist kein Zwang: frühe Sicherungen bleiben möglich und werden als kürzer markiert. Nach längeren Frame-Ausfällen „Livebild-Puffer unterbrochen“ anzeigen.
+Show progress while saving and block additional triggers. A minimum two-second fill is not mandatory: early saves remain possible and are marked as shorter. After extended frame outages, display “Live-view buffer interrupted.”
 
-Die Galerie liest die eigenen Manifest-Dateien. Dass handgeschriebene JPEGs in Sonys normaler Wiedergabe erscheinen, wird nicht vorausgesetzt. Kleine Thumbnails nur für sichtbare Einträge dekodieren; wenige Bitmaps behalten. Eine ausgewählte Originaldatei separat öffnen. Auswahl zunächst im Manifest markieren, ohne die restlichen Frames automatisch zu löschen.
+The gallery reads its own manifest files. Do not assume manually written JPEGs appear in Sony's normal playback. Decode small thumbnails only for visible entries; retain few bitmaps. Open a selected original separately. Initially mark selections in the manifest without automatically deleting the remaining frames.
 
-**Abnahme:** Alle Kernabläufe sind mit Kameratasten erreichbar. Speichern blockiert die Bedienoberfläche nicht. Wiederholtes Öffnen und Verlassen der Galerie erzeugt keinen Speichertrend. Jede Auswahl zeigt Reihenfolge und Zeitabstand zum Trigger verständlich an.
+**Acceptance:** Every core flow is accessible through camera buttons. Saving does not block the UI. Repeatedly opening and leaving the gallery does not produce a memory growth trend. Each selection clearly shows order and time offset from the trigger.
 
-## 10. Lebenszyklus und blockierende Aufrufe
+## 10. Lifecycle and blocking calls
 
-Bei Surface-Verlust, `onPause` und App-Ende zunächst weitere Aufnahmeaufträge sperren. Der Besitzer der Sony-Ressourcen beendet laufende Arbeiten, gibt alle DeviceMemory-Objekte frei und stoppt anschließend Sequenz, Preview und Kamera in geprüfter Reihenfolge. Ressourcen werden nicht auf dem UI-Thread freigegeben, während ein anderer Thread darin liest.
+On surface loss, `onPause` and app exit, first block further capture requests. The owner of Sony resources finishes ongoing work, releases all DeviceMemory objects and then stops sequence, preview and camera in a verified order. Do not release resources on the UI thread while another thread is reading them.
 
-Die Pause fordert das Ende asynchron an; kein unbegrenztes `join` auf dem UI-Thread. Späte Callbacks dürfen keine alte Activity bedienen. Erneutes Öffnen erst nach abgeschlossener Freigabe. Bei fehlgeschlagenem Öffnen nur tatsächlich erworbene Ressourcen freigeben.
+Pause requests termination asynchronously; no unbounded `join` on the UI thread. Late callbacks must not operate on an old activity. Reopen only after release is complete. If opening fails, release only resources actually acquired.
 
-Ein Java-Timeout beendet keine beliebig blockierende native Sony-Methode. Bereits die Probe muss deshalb messen, ob Abrufe bei gestopptem Livebild und beim Verlassen zurückkehren. Ein Watchdog meldet einen Stillstand, startet aber keine unbegrenzt vielen Ersatzthreads. Bleibt ein Aufruf nicht geordnet abbrechbar, ist ein belastbarer Wiederherstellungsweg auf Hardware erforderlich, bevor das Produkt freigegeben wird.
+A Java timeout does not terminate an arbitrarily blocking native Sony method. The probe must therefore measure whether reads return when live view stops or the app is left. A watchdog reports stalls but does not launch an unbounded number of replacement threads. If a call cannot be canceled in an orderly manner, a reliable hardware recovery path is required before release.
 
-## 11. Prüfstrategie
+## 11. Test strategy
 
-| Bereich | Ohne Kamera prüfbar | Hardware erforderlich |
+| Area | Testable without a camera | Hardware required |
 | --- | --- | --- |
-| Ringpuffer | Alter, Kapazität, Reihenfolge, Wraparound, früher Trigger | Speicherbudget und Dauerbetrieb |
-| Trigger | genau ein Snapshot, laufender Insert, generationenübergreifende Callbacks | Scancodes und tatsächliche Eingabeverzögerung |
-| Writer | volle Karte simulieren, kurze/abgebrochene Writes, unvollständige Sitzung | SD-Verhalten und Schreibzeiten |
-| Galerie | Manifest, beschädigte Dateien, begrenzte Dekodierung | Display und Kameratasten |
-| Sony-Adapter | simulierte leere/fehlerhafte Rückgaben | Klassen, Optionen, neue JPEGs, Blockierverhalten |
-| Normalfoto später | Controller-Ablauf | Preview-Unterbrechung, Fokus, Speicherung und Wiederaufnahme |
+| Ring buffer | Age, capacity, order, wraparound, early trigger | Memory budget and continuous operation |
+| Trigger | Exactly one snapshot, ongoing insert, callbacks across generations | Scan codes and actual input delay |
+| Writer | Simulated full card, short/interrupted writes, incomplete session | SD behavior and write times |
+| Gallery | Manifest, damaged files, bounded decoding | Display and camera buttons |
+| Sony adapter | Simulated empty/error returns | Classes, options, new JPEGs, blocking behavior |
+| Normal photo later | Controller flow | Preview interruption, focus, saving and resume |
 
-Die wichtigen Logiktests laufen mit Fake-Frames und kontrollierter Uhr. Ein Android-Emulator mit Stubs kann Oberflächen und Abläufe prüfen, aber keine Sony-Kamerafunktion bestätigen. Für die fertige Version folgt ein Lauf über mindestens 30 Minuten mit wiederholten Sicherungen, Pause/Wiederaufnahme und dokumentiertem Speicherverlauf. Akkuverbrauch und Erwärmung unter gleichen Bedingungen mit gewöhnlichem Livebildbetrieb vergleichen.
+Important logic tests use fake frames and a controlled clock. An Android emulator with stubs can test UI and flows, but cannot establish Sony camera operation. The finished version requires a run of at least 30 minutes with repeated saves, pause/resume and documented memory usage. Compare battery consumption and heating against ordinary live view under the same conditions.
 
-## 12. Konkrete Arbeitspakete und Aufwand
+## 12. Work packages and effort
 
-Die Schätzungen sind reine Entwicklungszeit für eine Person bei regelmäßig verfügbarer Kamera. Installationsprobleme, Beschaffung alter Build-Artefakte und neues Reverse Engineering können den Aufwand erheblich verlängern.
+Estimates cover development time for one person with regular camera access. Installation problems, obtaining old build artifacts and new reverse engineering can significantly increase effort.
 
-| Reihenfolge | Arbeitspaket | Aufwand | Fertig, wenn |
+| Order | Work package | Effort | Complete when |
 | --- | --- | --- | --- |
-| 1 | Build, feste Abhängigkeiten, Installation und Tastendiagnose | 1–3 Tage | Demo reproduzierbar startet |
-| 2 | API-Prüfung und Probe mit JPEG/Diagnoseexport | 1–3 Tage | Gültige veränderliche A5000-JPEGs nachgewiesen |
-| 3 | Zeitpuffer, begrenzter Pool und Messläufe | 2–4 Tage | Stabile gewählte Rate und korrekte Zeitfenster |
-| 4 | Trigger, Snapshot und SD-Sitzungsformat | 2–4 Tage | Wiederholbar vollständige Sicherungen und klare Fehler |
-| 5 | Statusanzeige und Galerie | 2–4 Tage | Bedienbarer Gesamtablauf |
-| 6 | Lebenszyklus, Dauertests und Release-Dokumentation | 2–5 Tage | Hardware-Abnahme bestanden |
+| 1 | Build, pinned dependencies, installation and button diagnostics | 1–3 days | Demo starts reproducibly |
+| 2 | API checks and probe with JPEG/diagnostic export | 1–3 days | Valid, changing A5000 JPEGs are demonstrated |
+| 3 | Time buffer, bounded pool and measurement runs | 2–4 days | Selected rate is stable and time windows are correct |
+| 4 | Trigger, snapshot and SD session format | 2–4 days | Repeated saves are complete and errors are clear |
+| 5 | Status display and gallery | 2–4 days | End-to-end flow is usable |
+| 6 | Lifecycle, endurance tests and release documentation | 2–5 days | Hardware acceptance passes |
 
-Gesamter Rahmen unter günstigen Bedingungen: **10–23 Arbeitstage**. Ein erster Einzelbild-Nachweis kann deutlich früher vorliegen. Ohne erfolgreiche Probe ist der Aufwand für ein fertiges Produkt nicht belastbar schätzbar.
+Total under favorable conditions: **10–23 working days**. Initial proof of a single image may arrive much earlier. Without a successful probe, the effort for a finished product cannot be estimated reliably.
 
-Vorgesehene Dateien im eigenständigen Projekt: `preview/SonyPreviewBackend.java`, `preview/FrameReader.java`, `buffer/FrameRingBuffer.java`, `capture/CaptureController.java`, `capture/CaptureWriter.java`, `capture/CaptureManifest.java`, `ui/GhostBufferActivity.java`, `ui/GhostGalleryActivity.java` und passende Ressourcen. Java und einfache, mit dem ermittelten alten Android kompatible APIs verwenden; keine ungetestete moderne Android-Laufzeit voraussetzen.
+Proposed standalone project files: `preview/SonyPreviewBackend.java`, `preview/FrameReader.java`, `buffer/FrameRingBuffer.java`, `capture/CaptureController.java`, `capture/CaptureWriter.java`, `capture/CaptureManifest.java`, `ui/GhostBufferActivity.java`, `ui/GhostGalleryActivity.java` and corresponding resources. Use Java and simple APIs compatible with the identified old Android runtime; do not assume an untested modern Android runtime.
 
-Release-Ergebnis: installierbare APK, fixierter Quellstand, Build-/Installationsanleitung, A5000-Testbericht mit Firmware, geprüfte Standardkonfiguration und dokumentierte Einschränkungen. Änderungen am Firmware-Image sind für diesen vorgesehenen App-Ansatz kein Arbeitspaket.
+Release deliverables: installable APK, pinned source revision, build/installation instructions, A5000 test report including firmware, verified default configuration and documented limitations. Firmware image modification is outside the intended app approach.
 
-## 13. Erweiterungen nach Version 1.0
+## 13. Extensions after version 1.0
 
-**Einstellbare Dauer und Rate:** Nur auf Hardware geprüfte Kombinationen anbieten. Jede Kombination gegen Bytebudget prüfen. Ein längerer Puffer darf nicht stillschweigend den Heap überfordern.
+**Configurable duration and rate:** Offer only combinations verified on hardware. Check each combination against the byte budget. A longer buffer must not silently exceed heap capacity.
 
-**Zusätzliches Normalfoto:** Erst den Vorlauf einfrieren, dann den dokumentierten Normalfoto-Ablauf auslösen. Prüfen, ob PreviewSequence vorher gestoppt werden muss und wie Preview danach wieder startet. Vorlauf und Normalfoto gemeinsam referenzieren, jedoch mit ihrer tatsächlichen unterschiedlichen Auflösung und Zeitlage. RAW nur aufnehmen, wenn der separate Kamera-Aufnahmepfad es nachweislich unterstützt.
+**Additional normal photo:** Freeze pre-trigger frames first, then invoke the documented normal-photo flow. Check whether PreviewSequence must stop first and how preview restarts afterward. Reference pre-trigger frames and normal photo together, with their actual differing resolutions and timing. Include RAW only if the separate camera capture path demonstrably supports it.
 
-**Nachlauf:** Optional nach dem Trigger weitere Frames sammeln. Dafür getrennte Grenzen und Snapshot-Regeln definieren; den bewährten reinen Vorlaufmodus erhalten.
+**Post-trigger frames:** Optionally collect further frames after the trigger. Define separate bounds and snapshot rules; preserve the established pre-trigger-only mode.
 
-**Puffern während Speicherung:** Erst bei ausreichendem Speicher und nach stabiler Grundversion einen zweiten Pool einsetzen. Beide Pools und ausstehende Schreibjobs gemeinsam begrenzen. Bei langsamer Karte neue Sicherungen kontrolliert ablehnen.
+**Buffering while saving:** Introduce a second pool only after the basic version is stable and memory is sufficient. Bound both pools and pending write jobs together. Reject new saves in a controlled way when the card is slow.
 
-**Bewegungserkennung:** In geringer Frequenz kleine dekodierte Graustufenbilder vergleichen. Schwellwert, mehrere aufeinanderfolgende Treffer und eine Sperrzeit verwenden. Autofokusänderungen, Belichtungssprünge und Kamerabewegung als mögliche Fehlauslöser testen. Die Rechenkosten zuerst messen.
+**Motion detection:** Compare small decoded grayscale images at a low frequency. Use a threshold, several consecutive matches and a cooldown. Test autofocus changes, exposure jumps and camera movement as possible false triggers. Measure processing costs first.
 
-**Bessere Bildauswahl:** Später einfache Schärfe- oder Bewegungsbewertungen erproben. Alle Original-JPEGs zunächst erhalten; automatische Bewertungen ersetzen keine erfolgreiche Aufzeichnung.
+**Better image selection:** Later experiment with simple sharpness or motion scores. Initially preserve all original JPEGs; automatic scoring does not replace successful recording.
 
-Der erste konkrete Implementierungsauftrag bleibt: **GhostBuffer Probe installieren, genau einen Livebild-Frame auf der A5000 lesen, als JPEG exportieren und unabhängig dekodieren.** Danach entscheiden die Messungen über Rate, Speicherausstattung und die Freigabe der nächsten Etappe.
+The first concrete implementation task remains: **Install GhostBuffer Probe, read exactly one live-view frame on the A5000, export it as a JPEG and decode it independently.** Measurements then determine rate, memory allocation and approval of the next stage.

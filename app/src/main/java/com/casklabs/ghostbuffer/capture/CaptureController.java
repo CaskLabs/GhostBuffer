@@ -95,7 +95,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             return;
         }
 
-        changeState(State.INITIALIZING, "Initialisiere Kamera...");
+        changeState(State.INITIALIZING, "Initializing camera...");
         try {
             backend.open(cameraContext);
             backend.startPreviewSequence(previewWidth, previewHeight, targetFps);
@@ -103,9 +103,9 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
             frameReader.start();
 
-            changeState(State.BUFFERING, "Puffer aktiv");
+            changeState(State.BUFFERING, "Buffer active");
         } catch (Throwable t) {
-            changeState(State.ERROR, "Fehler beim Start: " + t.getMessage());
+            changeState(State.ERROR, "Startup error: " + t.getMessage());
             if (listener != null) {
                 listener.onError(t);
             }
@@ -120,7 +120,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         backend.stopPreviewSequence();
         backend.close();
         ringBuffer.clear();
-        changeState(State.IDLE, "Inaktiv");
+        changeState(State.IDLE, "Inactive");
     }
 
     public synchronized void pause() {
@@ -131,7 +131,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         backend.stopPreviewSequence();
         backend.close();
         if (state != State.SAVING) {
-            changeState(State.PAUSED, "Pausiert");
+            changeState(State.PAUSED, "Paused");
         }
     }
 
@@ -160,8 +160,8 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             return false;
         }
 
-        changeState(State.FROZEN, "Puffer eingefroren (" + lastFrozenSnapshot.size() + " Bilder)");
-        changeState(State.SAVING, "Speichere...");
+        changeState(State.FROZEN, "Buffer frozen (" + lastFrozenSnapshot.size() + " frames)");
+        changeState(State.SAVING, "Saving...");
 
         // Pause frame reader while saving
         if (frameReader != null) {
@@ -198,7 +198,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             return;
         }
 
-        changeState(State.SAVING, "Erneuter Speicherversuch...");
+        changeState(State.SAVING, "Retrying save...");
         writer.writeSnapshotAsync(
             lastFrozenSnapshot,
             lastTriggerUptimeMs,
@@ -220,7 +220,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         if (frameReader != null && !frameReader.isRunning()) {
             frameReader.start();
         }
-        changeState(State.BUFFERING, "Puffer aktiv");
+        changeState(State.BUFFERING, "Buffer active");
     }
 
     @Override
@@ -233,7 +233,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
     @Override
     public void onReaderError(Throwable error) {
         if (state == State.BUFFERING) {
-            changeState(State.ERROR, "Lesefehler: " + error.getMessage());
+            changeState(State.ERROR, "Read error: " + error.getMessage());
             if (listener != null) {
                 listener.onError(error);
             }
@@ -249,7 +249,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
 
     @Override
     public synchronized void onSaveComplete(File sessionDir, CaptureManifest manifest) {
-        changeState(State.REVIEW, "Gespeichert: " + manifest.getFrameCount() + " Bilder");
+        changeState(State.REVIEW, "Saved: " + manifest.getFrameCount() + " frames");
         if (listener != null) {
             listener.onSaveComplete(sessionDir, manifest);
         }
@@ -257,7 +257,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
 
     @Override
     public synchronized void onSaveError(Throwable error) {
-        changeState(State.ERROR, "Speicherfehler: " + error.getMessage());
+        changeState(State.ERROR, "Save error: " + error.getMessage());
         if (listener != null) {
             listener.onError(error);
         }

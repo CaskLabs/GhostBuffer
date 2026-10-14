@@ -12,7 +12,7 @@ import java.util.Locale;
 
 /**
  * Executes a single-frame probe verification and exports the JPEG and diagnostic report
- * to <SD>/GHOSTBUFFER/probe/ as specified in Etappe 1 of the development plan.
+ * to <SD>/GHOSTBUFFER/probe/ as specified in Stage 1 of the development plan.
  */
 public class GhostProbeManager {
     public static class ProbeResult {
@@ -90,9 +90,9 @@ public class GhostProbeManager {
                 writer.close();
             }
 
-            return new ProbeResult(true, jpegFile, reportFile, frame.getLength(), duration, "Probe erfolgreich gesichert");
+            return new ProbeResult(true, jpegFile, reportFile, frame.getLength(), duration, "Probe saved successfully");
         } catch (Throwable t) {
-            return new ProbeResult(false, null, null, 0, 0, "Probe fehlgeschlagen: " + t.getMessage());
+            return new ProbeResult(false, null, null, 0, 0, "Probe failed: " + t.getMessage());
         }
     }
 }

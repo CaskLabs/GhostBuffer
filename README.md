@@ -2,7 +2,7 @@
 
 **GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible mirrorless cameras, specifically targeting the **Sony α5000 (ILCE-5000)**.
 
-> **V1 review (14 October 2026):** The debug build and 21 host unit tests pass, but release-blocking lifecycle and data-integrity issues remain. Camera compatibility and performance have not been verified in this review. See [Review der V1](#review-der-v1) for findings and validation limits.
+> **V1 review (14 October 2026):** The debug build and 21 host unit tests pass, but release-blocking lifecycle and data-integrity issues remain. Camera compatibility and performance have not been verified in this review. See [V1 Review](#v1-review) for findings and validation limits.
 
 ---
 
@@ -33,8 +33,8 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Detailed `manifest.json` for every session containing per-frame timing offsets relative to the shutter trigger, file sizes, and measured FPS.
 
 - **Live Viewfinder HUD:**
-  - Real-time status indicators (`PUFFER AKTIV`, `SPEICHERN...`, `AUFNAHME GESPEICHERT`, `FEHLER`).
-  - Rolling FPS calculation, frame count, and buffer time span (e.g. `2.0 s | 20 Bilder | 10.0 FPS`).
+  - Real-time status indicators (`BUFFER ACTIVE`, `SAVING...`, `CAPTURE SAVED`, `ERROR`).
+  - Rolling FPS calculation, frame count, and buffer time span (e.g. `2.0 s | 20 frames | 10.0 FPS`).
   - On-screen save progress indicator.
 
 - **On-Camera Gallery:**
@@ -195,84 +195,84 @@ This project is open-source under the MIT / Apache 2.0 license compatible with t
 
 ---
 
-## Review der V1
+## V1 Review
 
-**Stand:** 14. Oktober 2026. Geprüft wurde `ed41c7b` mit der V1-Implementierung aus `fd56731`. Umfang: Quellcode der Aufnahme-Pipeline, Oberfläche, Galerie, Probe, Speicherverwaltung, Build-Konfiguration und vorhandene Tests. Es wurden keine Implementierungsfehler behoben; dieses Review dokumentiert den Handlungsbedarf.
+**Date:** 14 October 2026. Reviewed revision: `ed41c7b`, containing the V1 implementation from `fd56731`. Scope: capture pipeline, UI, gallery, probe, storage management, build configuration and existing tests. This review documents required work; it did not fix implementation bugs.
 
-**Bewertung:** Die V1 besitzt eine brauchbare Trennung von Backend, Ringpuffer, Controller und Writer. Zeitfensterfilterung beim Trigger, unabhängige Snapshot-Kopien, Auslöser-Latch und Freigabe aller zurückgegebenen `DeviceMemory`-Objekte im `finally` sind gute Grundlagen. Für eine belastbare Freigabe auf der A5000 bleiben jedoch die folgenden Fehler und Hardware-Nachweise offen. Die Produktbeschreibungen oben sind keine Hardware-Abnahme.
+**Assessment:** V1 has a useful separation between backend, ring buffer, controller and writer. Filtering the time window at the trigger, independent snapshot copies, shutter latching and releasing all returned `DeviceMemory` objects in `finally` provide a good foundation. However, the following issues and hardware checks remain open before a reliable A5000 release. The product descriptions above do not constitute hardware acceptance.
 
-### Prüfung und Aussagegrenzen
+### Validation and limitations
 
-- Mit dem lokal vorhandenen JDK 8, Android SDK 10 und Build Tools 25.0.2 wurde `JAVA_HOME=/home/agent/tools/jdk8 PATH=/home/agent/tools/jdk8/bin:$PATH ./gradlew testDebugUnitTest assembleDebug --offline` erfolgreich ausgeführt. **21 Tests, 0 Fehler, 0 übersprungen.** Der Offline-Build bestätigt den vorhandenen Cache, keinen sauberen Erstbuild auf einem anderen Rechner.
-- Zusätzliche temporäre JVM-Prüfungen gegen die gebauten Klassen bestätigten: Probe erfolgreich trotz nicht dekodierbarer JPEG-Datei; Annahme eines 240-Byte-Frames bei 100-Byte-Budget; unsichtbare Sitzung ohne Manifest; `BUFFERING` mit `frameReader == null` nach `pause()` und `resumeBuffering()` sowie nach simuliertem spätem Save-Callback; falsches UTC-Suffix bei einer anderen Zeitzone. Diese Prüfprogramme wurden nicht ins Repository aufgenommen.
-- Keine Sony-Kamera wurde angeschlossen. Installation, tatsächliche Sony-API-Semantik, Autofokus, neue statt wiederholter Frames, SD-Verhalten, Speicherverbrauch, Tasten und Langzeitstabilität wurden nicht auf Hardware geprüft. Hosttests mit Fake-Backend ersetzen diese Nachweise nicht.
+- Using the locally available JDK 8, Android SDK 10 and Build Tools 25.0.2, `JAVA_HOME=/home/agent/tools/jdk8 PATH=/home/agent/tools/jdk8/bin:$PATH ./gradlew testDebugUnitTest assembleDebug --offline` completed successfully. **21 tests, 0 failures, 0 skipped.** The offline build validates the existing cache, not a clean first build on another machine.
+- Additional temporary JVM checks against the compiled classes confirmed: a successful probe with an undecodable JPEG; acceptance of a 240-byte frame with a 100-byte budget; an invisible session without a manifest; `BUFFERING` with `frameReader == null` after `pause()` and `resumeBuffering()`, including after a simulated late save callback; and an incorrect UTC suffix in another time zone. These check programs were not added to the repository.
+- No Sony camera was connected. Installation, actual Sony API semantics, autofocus, distinct rather than repeated frames, SD behavior, memory consumption, buttons and long-term stability were not tested on hardware. Host tests with the fake backend do not replace those checks.
 
-### Befunde nach Priorität
+### Findings by priority
 
-**P1 = vor einer verlässlichen V1-Freigabe beheben; P2 = relevante Funktions- oder Qualitätslücke.** „Codebefund“ bezeichnet aus dem Quellcode abgeleitete Abläufe; Hardwarefolgen sind dabei noch nicht gemessen.
+**P1 = fix before a reliable V1 release; P2 = relevant functional or quality gap.** A “code finding” describes behavior inferred from the source; its hardware consequences have not been measured.
 
-1. **P1 – Späte Save-Callbacks können einen pausierten Controller wieder aktiv anzeigen.**
+1. **P1 – Late save callbacks can make a paused controller appear active again.**
 
-   Quellen: [CaptureController.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureController.java), `pause`, `start`, `onSaveComplete`, `resumeBuffering`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onSaveComplete`.
+   Sources: [CaptureController.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureController.java), `pause`, `start`, `onSaveComplete`, `resumeBuffering`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onSaveComplete`.
 
-   Ablauf: Während des Speicherns lässt sich die Galerie öffnen. `pause()` entfernt den Reader und schließt das Backend, lässt aber `SAVING` bestehen. Kommt der Writer danach zurück, setzt er ohne Prüfung `REVIEW`; der verzögerte UI-Callback ruft anschließend `resumeBuffering()` auf. Diese Methode setzt auch ohne Reader `BUFFERING`. Bei einer schnellen Rückkehr während `SAVING` überspringt `start()` zusätzlich die Initialisierung. Der Teilablauf mit spätem Callback wurde auf der JVM bestätigt. **Folge:** Die UI kann Aufnahmebereitschaft melden, obwohl keine Frames gelesen werden. **Maßnahme:** Vordergrundstatus und Laufgeneration prüfen, alte Callbacks entkoppeln, UI-Aufträge bei Pause entfernen und Kamera/Reader vor `BUFFERING` vollständig neu initialisieren. **Abnahme:** Galerie während langsamer Speicherung öffnen, dort bleiben und mehrfach zurückkehren; kein Puffern im Hintergrund und zuverlässig neue Frames nach Rückkehr.
+   Sequence: The gallery can be opened while saving. `pause()` removes the reader and closes the backend but preserves `SAVING`. If the writer completes afterward, it sets `REVIEW` without a lifecycle check; the delayed UI callback then calls `resumeBuffering()`. This method sets `BUFFERING` even without a reader. Returning quickly during `SAVING` also causes `start()` to skip initialization. The partial sequence with a late callback was confirmed on the JVM. **Impact:** The UI can report capture readiness while no frames are being read. **Action:** Check foreground state and run generation, detach stale callbacks, remove queued UI work on pause and fully reinitialize the camera/reader before setting `BUFFERING`. **Acceptance:** Open the gallery during a slow save, stay there and return repeatedly; no background buffering and reliably fresh frames after returning.
 
-2. **P1 – Kamera-Zugriffe sind nicht serialisiert; Reader-Stopp garantiert kein Ende.**
+2. **P1 – Camera access is not serialized, and stopping the reader does not guarantee termination.**
 
-   Quellen: [FrameReader.java](app/src/main/java/com/casklabs/ghostbuffer/preview/FrameReader.java), `stop`; [SonyPreviewBackend.java](app/src/main/java/com/casklabs/ghostbuffer/preview/SonyPreviewBackend.java), `readNextFrame`, `close`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `runProbe`, `onPause`.
+   Sources: [FrameReader.java](app/src/main/java/com/casklabs/ghostbuffer/preview/FrameReader.java), `stop`; [SonyPreviewBackend.java](app/src/main/java/com/casklabs/ghostbuffer/preview/SonyPreviewBackend.java), `readNextFrame`, `close`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `runProbe`, `onPause`.
 
-   Codebefund: Fn startet einen weiteren Thread, der parallel zum Reader dasselbe Backend und denselben direkten ByteBuffer nutzt. Mehrfaches Fn erlaubt weitere Threads. `stop()` wartet höchstens 500 ms und verwirft dann die Threadreferenz; anschließend können Sequence und Kamera geschlossen werden, obwohl ein nativer Leseaufruf noch läuft. Ein erneuter Start teilt zudem das `running`-Flag mit dem alten Thread. **Folge:** Mögliche korrupte Frames, konkurrierende native Zugriffe und Freigabe noch benutzter Ressourcen. **Maßnahme:** Ein Besitzerthread für Kamera, Sequence und Probe; Ende bestätigen, bevor Ressourcen freigegeben oder neue Reader gestartet werden. **Abnahme:** Blockierenden Backend-Aufruf simulieren und Pause, Neustart sowie wiederholtes Fn prüfen; Hardware-Abbruchverhalten separat messen.
+   Code finding: Fn starts another thread using the same backend and direct ByteBuffer in parallel with the reader. Repeated Fn presses allow more threads. `stop()` waits at most 500 ms and then discards the thread reference; the sequence and camera can subsequently be closed while a native read is still running. Restarting also shares the `running` flag with the old thread. **Impact:** Potential corrupt frames, concurrent native access and release of resources still in use. **Action:** Use one owner thread for camera, sequence and probe; confirm termination before releasing resources or starting new readers. **Acceptance:** Simulate a blocking backend call and test pause, restart and repeated Fn presses; measure hardware cancellation behavior separately.
 
-3. **P1 – Die Kamera-Sequenz startet vor einer bestätigten Livebild-Surface.**
+3. **P1 – The camera sequence starts before a valid live-view surface is confirmed.**
 
-   Quelle: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onResume`, `surfaceCreated`, `surfaceDestroyed`.
+   Source: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onResume`, `surfaceCreated`, `surfaceDestroyed`.
 
-   Codebefund: `onResume()` startet den Controller direkt nach dem Kameraöffnen. Preview-Display und normales Preview werden erst in `surfaceCreated()` eingerichtet; bei Surface-Verlust wird nur das normale Preview gestoppt. **Folge:** Die Initialisierung hängt von der Callback-Reihenfolge ab, während der Reader bei verlorener Surface weiterlaufen kann. **Maßnahme:** Initialisierung an Vordergrund, gültige Surface und gestartetes Preview binden; Surface-Verlust in den geordneten Stopp aufnehmen und Ressourcen auch nach fehlgeschlagener Initialisierung freigeben. **Abnahme:** Start, Surface-Neuerstellung und Pause/Wiederaufnahme auf der A5000 wiederholt prüfen.
+   Code finding: `onResume()` starts the controller immediately after opening the camera. The preview display and normal preview are configured only in `surfaceCreated()`; surface loss stops only the normal preview. **Impact:** Initialization depends on callback order, while the reader can continue after losing its surface. **Action:** Gate initialization on foreground state, a valid surface and a started preview; include surface loss in orderly shutdown and release resources after failed initialization. **Acceptance:** Repeatedly test startup, surface recreation and pause/resume on the A5000.
 
-4. **P1 – Kamerafehler können unbemerkt auf synthetische Aufnahmen umschalten.**
+4. **P1 – Camera failures can silently switch to synthetic captures.**
 
-   Quellen: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), Backend-Auswahl und `onResume`; [FakePreviewBackend.java](app/src/main/java/com/casklabs/ghostbuffer/preview/FakePreviewBackend.java); [GhostProbeManager.java](app/src/main/java/com/casklabs/ghostbuffer/probe/GhostProbeManager.java).
+   Sources: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), backend selection and `onResume`; [FakePreviewBackend.java](app/src/main/java/com/casklabs/ghostbuffer/preview/FakePreviewBackend.java); [GhostProbeManager.java](app/src/main/java/com/casklabs/ghostbuffer/probe/GhostProbeManager.java).
 
-   Bei fehlender Sequence-Klasse oder fehlgeschlagenem `CameraEx.open()` wird automatisch das Fake-Backend verwendet. Es erzeugt JPEG-Marker und Dummybytes, aber kein dekodierbares Bild. Dennoch prüft die Probe nur den SOI-Anfang und meldet Erfolg; der Writer kann solche Daten als vollständige Sitzung speichern. JVM-Nachweis: `Probe success=true`, aber `ImageIO.read` liefert kein Bild bzw. schlägt fehl. **Maßnahme:** Simulation ausdrücklich aktivierbar und sichtbar machen; auf Kamerafehler mit Fehlerstatus reagieren. Die Hardwareprobe muss echte dekodierbare, veränderliche Bilder nachweisen. **Abnahme:** Kameraöffnungsfehler darf keine scheinbar echte Aufnahme erzeugen; exportierte Probe vollständig dekodieren.
+   A missing sequence class or failed `CameraEx.open()` automatically selects the fake backend. It produces JPEG markers and dummy bytes but no decodable image. Nevertheless, the probe checks only the SOI prefix and reports success; the writer can store such data as a complete session. JVM evidence: `Probe success=true`, but `ImageIO.read` returns no image or fails. **Action:** Make simulation explicitly selectable and visible; report camera failures as errors. The hardware probe must demonstrate real, decodable, changing images. **Acceptance:** A camera-open failure must not produce an apparently real capture; fully decode the exported probe.
 
-5. **P1 – Unterbrochene Sitzungen verschwinden aus der Galerie; Persistenz ist nur teilweise abgesichert.**
+5. **P1 – Interrupted sessions disappear from the gallery, and persistence is only partially protected.**
 
-   Quellen: [CaptureWriter.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureWriter.java), `writeSnapshot`; [CaptureSession.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureSession.java), `loadAllSessions`; [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java).
+   Sources: [CaptureWriter.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureWriter.java), `writeSnapshot`; [CaptureSession.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureSession.java), `loadAllSessions`; [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java).
 
-   Das Manifest entsteht erst nach allen JPEGs. Bricht ein früher Write ab, fehlen Manifest und `COMPLETE`. Der Loader nimmt ausschließlich Sitzungen mit lesbarem Manifest auf; eine solche Sitzung wurde im JVM-Versuch nicht angezeigt. Auch geladene unvollständige Sitzungen werden in der Galerie nicht als unvollständig markiert. JPEGs werden synchronisiert und umbenannt, Manifest und Marker jedoch nicht entsprechend synchronisiert; ein Marker allein verifiziert keine vorhandenen, intakten Frames. **Maßnahme:** Unvollständige Verzeichnisse sichtbar machen, Status in der Galerie anzeigen, Manifest atomar schreiben und Daten vor Abschluss soweit unterstützt synchronisieren sowie beim Laden prüfen. **Abnahme:** Schreibfehler nach dem ersten JPEG, beschädigtes Manifest und fehlenden Frame simulieren; kein falscher Erfolg und keine versteckten Restdaten. Stromausfallverhalten bleibt ein SD-Hardwaretest.
+   The manifest is created only after all JPEGs. An early write failure leaves neither manifest nor `COMPLETE`. The loader includes only sessions with a readable manifest; such an interrupted session was omitted in the JVM check. Even loaded incomplete sessions are not labeled incomplete in the gallery. JPEGs are synced and renamed, but the manifest and marker are not synced in the same way; a marker alone does not verify that frames exist and are intact. **Action:** Show incomplete directories and their status in the gallery, write the manifest atomically, sync data before completion where supported and validate it when loading. **Acceptance:** Simulate failure after the first JPEG, a damaged manifest and a missing frame; no false success or hidden leftover data. Power-loss behavior remains an SD hardware test.
 
-6. **P2 – Das Bytebudget begrenzt weder jeden Insert noch den Gesamtspeicher.**
+6. **P2 – The byte budget limits neither every insert nor total memory use.**
 
-   Quellen: [FrameRingBuffer.java](app/src/main/java/com/casklabs/ghostbuffer/buffer/FrameRingBuffer.java), `push`, `freezeSnapshot`; [FrameSlot.java](app/src/main/java/com/casklabs/ghostbuffer/buffer/FrameSlot.java).
+   Sources: [FrameRingBuffer.java](app/src/main/java/com/casklabs/ghostbuffer/buffer/FrameRingBuffer.java), `push`, `freezeSnapshot`; [FrameSlot.java](app/src/main/java/com/casklabs/ghostbuffer/buffer/FrameSlot.java).
 
-   Ein Frame größer als das Budget wird nach Entfernen aller bisherigen Frames trotzdem eingefügt: JVM-Nachweis 240 Bytes bei 100 Bytes Budget. Die aktuelle Sony-Quelle begrenzt einzelne Frames auf 256 KiB, sodass dieser konkrete Überlauf mit dem Standardbudget dort nicht erreicht wird. Unabhängig davon verdoppelt `freezeSnapshot()` die JPEG-Arrays vorübergehend; der ursprüngliche Ring bleibt während des Speicherns bestehen. Direkter Buffer, Bitmaps und native Kameraressourcen kommen hinzu. **Maßnahme:** Übergrößen und ungültige Längen ablehnen, tatsächliche Arraybelegung berücksichtigen und Snapshot-/Ringbesitz gemeinsam budgetieren. **Abnahme:** Grenzfälle testen und Spitzenverbrauch beim Trigger auf der Kamera messen; 3 MiB nicht als OOM-Garantie darstellen.
+   A frame larger than the budget is still inserted after evicting all previous frames: JVM evidence showed 240 bytes with a 100-byte budget. The current Sony source limits individual frames to 256 KiB, so this particular overflow is not reached there with the default budget. Separately, `freezeSnapshot()` temporarily doubles the JPEG arrays; the original ring remains in memory during saving. The direct buffer, bitmaps and native camera resources add further usage. **Action:** Reject oversized frames and invalid lengths, account for actual array allocation and budget snapshot/ring ownership together. **Acceptance:** Test boundary cases and measure peak memory at the trigger on the camera; do not present 3 MiB as an OOM guarantee.
 
-7. **P2 – Fehlerzustände haben keinen vollständigen bedienbaren Wiederherstellungsweg.**
+7. **P2 – Error states lack a complete recovery path through the UI.**
 
-   Quellen: [CaptureController.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureController.java), `onReaderError`, `retrySave`, `resumeBuffering`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), Tastenbelegung und Statistik-Callbacks.
+   Sources: [CaptureController.java](app/src/main/java/com/casklabs/ghostbuffer/capture/CaptureController.java), `onReaderError`, `retrySave`, `resumeBuffering`; [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), button mapping and statistics callbacks.
 
-   Codebefund: Nach Lesefehlern bleibt der Reader aktiv, der Controller bleibt aber in `ERROR`. Bei dauerhaft leeren Frames erfolgt gar kein Fehler-/Stale-Status, die letzte Statistik bleibt stehen. `retrySave()` existiert, wird von der UI jedoch nicht aufgerufen. Galerie öffnen und zurückkehren kann neu starten, ohne den behaltenen fehlgeschlagenen Snapshot ausdrücklich zu sichern oder zu verwerfen. **Maßnahme:** Readerfehler und Frame-Ausfälle definiert behandeln; Wiederholen und bewusstes Verwerfen über Kameratasten anbieten. **Abnahme:** Leere Frames, Lesefehler und volle Karte simulieren; Status muss den tatsächlichen Zustand wiedergeben und jeder Fehler einen erreichbaren Ausweg besitzen.
+   Code finding: After read errors the reader stays active, but the controller remains in `ERROR`. Persistently empty frames produce no error/stale status, leaving the last statistics visible. `retrySave()` exists but is never called by the UI. Opening the gallery and returning can restart capture without explicitly saving or discarding the retained failed snapshot. **Action:** Define handling for reader errors and frame outages; offer retry and deliberate discard through camera buttons. **Acceptance:** Simulate empty frames, read failures and a full card; status must reflect actual operation and every error must have an accessible recovery path.
 
-8. **P2 – Manifest enthält falsche App-Version und potenziell falsche UTC-Zeit.**
+8. **P2 – The manifest contains the wrong app version and potentially incorrect UTC time.**
 
-   Quellen: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onCreate`; [GhostStorage.java](app/src/main/java/com/casklabs/ghostbuffer/storage/GhostStorage.java), `formatIso8601`; [app/build.gradle](app/build.gradle).
+   Sources: [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), `onCreate`; [GhostStorage.java](app/src/main/java/com/casklabs/ghostbuffer/storage/GhostStorage.java), `formatIso8601`; [app/build.gradle](app/build.gradle).
 
-   `setAppVersion(getDeviceInfo().getFirmwareVersion())` schreibt die Kamera-Firmware in `app_version`. Die ISO-Funktion verwendet die lokale Zeitzone, hängt aber ein wörtliches `Z` an. JVM-Nachweis bei GMT+02:00: Epoch 0 wird `1970-01-01T02:00:00.000Z`. **Maßnahme:** App-Version aus `BuildConfig.VERSION_NAME`, Firmware separat und Zeit explizit in UTC schreiben. **Abnahme:** Metadaten mit APK-Version vergleichen und mindestens zwei Zeitzonen testen.
+   `setAppVersion(getDeviceInfo().getFirmwareVersion())` writes camera firmware into `app_version`. The ISO formatter uses the local time zone but appends a literal `Z`. JVM evidence in GMT+02:00: epoch 0 becomes `1970-01-01T02:00:00.000Z`. **Action:** Take the app version from `BuildConfig.VERSION_NAME`, record firmware separately and explicitly format time in UTC. **Acceptance:** Compare metadata with the APK version and test at least two time zones.
 
-9. **P2 – Galerie kann bei fehlenden Frames das vorherige Bild anzeigen.**
+9. **P2 – The gallery can show the previous image when a frame is missing.**
 
-   Quelle: [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java), `displayCurrentFrame`, `deleteRecursive`.
+   Source: [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java), `displayCurrentFrame`, `deleteRecursive`.
 
-   Codebefund: Existiert die ausgewählte Datei nicht, wird das bisherige Bild nicht geleert, während Beschriftung und Zeitoffset auf den neuen Frame wechseln. Session-Scan, Dekodierung und rekursives Löschen laufen zudem auf dem UI-Thread; Löschfehler werden ignoriert. **Maßnahme:** Bild beim Wechsel zunächst leeren, fehlende/beschädigte Frames sichtbar kennzeichnen, SD-Arbeiten auslagern und Löschresultate melden. **Abnahme:** Eine referenzierte Datei entfernen, zwischen Frames wechseln und langsame bzw. nicht beschreibbare Karte simulieren.
+   Code finding: If the selected file does not exist, the previous image is not cleared, while its caption and time offset change to the new frame. Session scanning, decoding and recursive deletion also run on the UI thread; deletion failures are ignored. **Action:** Clear the image before switching, visibly mark missing/damaged frames, move SD work off the UI thread and report deletion results. **Acceptance:** Remove a referenced file, switch frames and simulate a slow or unwritable card.
 
-10. **P2 – Build und dokumentierte Bedienung sind noch nicht reproduzierbar bzw. vollständig belegt.**
+10. **P2 – Build reproducibility and documented controls are not fully established.**
 
-    Quellen: [app/build.gradle](app/build.gradle), [AndroidManifest.xml](app/src/main/AndroidManifest.xml), [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java).
+    Sources: [app/build.gradle](app/build.gradle), [AndroidManifest.xml](app/src/main/AndroidManifest.xml), [GhostBufferActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostBufferActivity.java), [GhostGalleryActivity.java](app/src/main/java/com/casklabs/ghostbuffer/ui/GhostGalleryActivity.java).
 
-    Framework und Stubs verwenden bewegliche `-SNAPSHOT`-Versionen. Die APK-Version wird aus Git abgeleitet; beim Review entstand `GhostBuffer-debug-1.0.0-1-ged41c7b.apk`, daher ist der oben genannte Dateiname kein festes Buildergebnis. Das Diagnose-Menü ist zwar deklariert, aber vom Launcher und den GhostBuffer-Tasten aus nicht erreichbar. Die Galerie implementiert Richtungstasten, keine eigene Dial-Navigation. `LICENSE.txt` enthält MIT; die README-Angabe „MIT / Apache 2.0“ ist dadurch nicht belegt. **Maßnahme:** Geprüfte Abhängigkeiten fixieren, einen sauberen Erstbuild nachweisen, Versions-/Dateinamen erklären und Bedienungs- sowie Lizenzangaben mit dem tatsächlichen Stand abgleichen.
+    Framework and stubs use moving `-SNAPSHOT` versions. The APK version is derived from Git; the review produced `GhostBuffer-debug-1.0.0-1-ged41c7b.apk`, so the filename above is not a fixed build output. The diagnostic menu is declared but cannot be reached from the launcher or GhostBuffer buttons. The gallery implements directional buttons, with no custom dial navigation. `LICENSE.txt` contains MIT; it does not establish the README claim “MIT / Apache 2.0.” **Action:** Pin verified dependencies, demonstrate a clean first build, explain versions/filenames and align controls and license descriptions with the implementation.
 
-### Empfohlene Abnahme vor Freigabe
+### Recommended acceptance before release
 
-Zuerst Lifecycle, Serialisierung, Simulation und Wiederherstellung unvollständiger Sitzungen absichern (P1). Anschließend die P2-Fälle durch gezielte Tests abdecken. Die bestehenden Tests prüfen überwiegend Erfolgsabläufe mit synthetischen Daten; sie decken weder blockierende Sony-Aufrufe noch echte Bilddekodierung, UI-Lifecycle oder frühe Schreibabbrüche ab.
+First address lifecycle, serialization, simulation and recovery of incomplete sessions (P1). Then cover the P2 cases with targeted tests. Existing tests primarily check successful flows with synthetic data; they do not cover blocking Sony calls, actual image decoding, UI lifecycle or early write failures.
 
-Danach die Hardware-Abnahme aus [GHOSTBUFFER_PLAN.md](GHOSTBUFFER_PLAN.md) dokumentieren: Modell/Firmware und Installation; mindestens zehn dekodierbare, veränderliche Probe-JPEGs aus zwei Starts; gemessene neue Frames/s und Latenz; 50 Sicherungen einschließlich langem Tastendruck; fehlende/volle/entfernte SD-Karte; wiederholte Pause und Galerie; mindestens 30 Minuten Betrieb mit Speicherverlauf. Die Zeitoffsets im Manifest beziehen sich auf das Ende des App-Lesevorgangs, nicht auf nachgewiesene Sensor-Belichtungszeitpunkte. VGA-Vorschauframes, die tatsächliche verfügbare Pufferdauer und die Aufnahmelücke während Speicherung/Galerie müssen als Grenzen der V1 beschrieben bleiben.
+Next, document hardware acceptance from [GHOSTBUFFER_PLAN.md](GHOSTBUFFER_PLAN.md): model/firmware and installation; at least ten decodable, changing probe JPEGs across two starts; measured distinct frames/s and latency; 50 saves including a held shutter; missing/full/removed SD card; repeated pause and gallery navigation; and at least 30 minutes of operation with memory tracking. Manifest time offsets refer to the end of the app read, not verified sensor exposure times. VGA preview frames, actual available buffer coverage and the capture gap during saving/gallery use must remain documented V1 limitations.

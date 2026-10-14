@@ -50,7 +50,7 @@ public class GhostGalleryActivity extends BaseActivity {
         if (sessions.isEmpty()) {
             tvEmpty.setVisibility(View.VISIBLE);
             imageView.setVisibility(View.GONE);
-            tvSession.setText("Keine Aufnahmen");
+            tvSession.setText("No captures");
             tvFrameInfo.setText("");
         } else {
             tvEmpty.setVisibility(View.GONE);
@@ -72,7 +72,7 @@ public class GhostGalleryActivity extends BaseActivity {
         CaptureSession session = sessions.get(currentSessionIndex);
         int frameCount = session.getFrameCount();
         if (frameCount == 0) {
-            tvSession.setText(session.getSessionId() + " (Leer)");
+            tvSession.setText(session.getSessionId() + " (Empty)");
             tvFrameInfo.setText("");
             imageView.setImageDrawable(null);
             return;
@@ -100,7 +100,7 @@ public class GhostGalleryActivity extends BaseActivity {
         }
 
         CaptureManifest manifest = session.getManifest();
-        String sessionLabel = String.format(Locale.US, "Sitzung %s (%d/%d)",
+        String sessionLabel = String.format(Locale.US, "Session %s (%d/%d)",
             session.getSessionId(), currentSessionIndex + 1, sessions.size());
         tvSession.setText(sessionLabel);
 
@@ -108,10 +108,10 @@ public class GhostGalleryActivity extends BaseActivity {
             CaptureManifest.FrameInfo info = manifest.getFrames().get(currentFrameIndex);
             float offsetSec = info.offsetFromTriggerMs / 1000.0f;
             String offsetSign = offsetSec >= 0 ? "+" : "";
-            tvFrameInfo.setText(String.format(Locale.US, "Bild %d/%d (%s%.2f s)",
+            tvFrameInfo.setText(String.format(Locale.US, "Frame %d/%d (%s%.2f s)",
                 currentFrameIndex + 1, frameCount, offsetSign, offsetSec));
         } else {
-            tvFrameInfo.setText(String.format(Locale.US, "Bild %d/%d", currentFrameIndex + 1, frameCount));
+            tvFrameInfo.setText(String.format(Locale.US, "Frame %d/%d", currentFrameIndex + 1, frameCount));
         }
     }
 
