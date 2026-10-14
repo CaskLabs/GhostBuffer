@@ -80,4 +80,99 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <LinearLayout android:id="@+id/exposure_panel"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:layout_below="@id/hud_top_bar" android:layout_above="@id/hud_bottom_bar"
+        android:layout_margin="8dp" android:padding="10dp" android:orientation="vertical"
+        android:background="@drawable/message_panel" android:visibility="gone">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Exposure settings" android:textSize="18sp" android:textStyle="bold" android:textColor="#F2F5F7"
+            android:paddingBottom="6dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="UP/DOWN Select   LEFT/RIGHT Change   MENU Done" android:textColor="#BCC6CC"
+            android:textSize="12sp" android:paddingBottom="5dp" />
+        <LinearLayout android:id="@+id/exposure_mode" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="Exposure mode" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_mode_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/exposure_shutter" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="Shutter speed" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_shutter_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/exposure_aperture" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="Aperture" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_aperture_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/exposure_iso" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="ISO" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_iso_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/exposure_ev" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="Exposure compensation" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_ev_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/exposure_wb" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:layout_marginBottom="3dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="10dp"
+            android:paddingRight="10dp" android:background="@drawable/menu_card" android:clickable="true">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="White balance" android:textColor="#BCC6CC" android:textSize="14sp" />
+            <TextView android:id="@+id/exposure_wb_value" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
+                android:textSize="16sp" android:textStyle="bold" />
+        </LinearLayout>
+        <TextView android:id="@+id/tv_exposure_hint" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:paddingTop="4dp" android:textColor="#BCC6CC"
+            android:textSize="12sp" android:maxLines="2" android:text="Center: Auto exposure + Auto ISO" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:paddingTop="6dp">
+            <TextView android:id="@+id/exposure_less" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:padding="7dp"
+                android:layout_marginRight="4dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:text="-" android:textColor="#F2F5F7" android:textSize="14sp" android:clickable="true" />
+            <TextView android:id="@+id/exposure_more" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:padding="7dp"
+                android:layout_marginRight="4dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:text="+" android:textColor="#F2F5F7" android:textSize="14sp" android:clickable="true" />
+            <TextView android:id="@+id/exposure_auto" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:padding="7dp"
+                android:layout_marginRight="4dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:text="Auto / 0 EV" android:textColor="#F2F5F7" android:textSize="14sp" android:clickable="true" />
+            <TextView android:id="@+id/exposure_close" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:padding="7dp"
+                android:layout_marginRight="4dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:text="Done" android:textColor="#F2F5F7" android:textSize="14sp" android:clickable="true" />
+        </LinearLayout>
+    </LinearLayout>
+
 </RelativeLayout>

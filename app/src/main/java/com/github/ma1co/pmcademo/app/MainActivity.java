@@ -10,6 +10,7 @@ import com.casklabs.ghostbuffer.ui.GhostGalleryActivity;
 public class MainActivity extends BaseActivity {
     private View cameraItem;
     private View galleryItem;
+    private View exposureItem;
     private int selected;
 
     @Override
@@ -18,11 +19,15 @@ public class MainActivity extends BaseActivity {
         setContentView(R.layout.activity_ghost_menu);
         cameraItem = findViewById(R.id.menu_camera);
         galleryItem = findViewById(R.id.menu_gallery);
+        exposureItem = findViewById(R.id.menu_exposure);
         cameraItem.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { openCamera(); }
         });
         galleryItem.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { openGallery(); }
+        });
+        exposureItem.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { openExposure(); }
         });
         updateSelection();
     }
@@ -30,6 +35,7 @@ public class MainActivity extends BaseActivity {
     private void updateSelection() {
         cameraItem.setSelected(selected == 0);
         galleryItem.setSelected(selected == 1);
+        exposureItem.setSelected(selected == 2);
     }
 
     private void openCamera() {
@@ -42,15 +48,23 @@ public class MainActivity extends BaseActivity {
         finish();
     }
 
+    private void openExposure() {
+        Intent intent = new Intent(this, GhostBufferActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra(GhostBufferActivity.EXTRA_OPEN_EXPOSURE, true);
+        startActivity(intent);
+        finish();
+    }
+
     @Override protected boolean onUpKeyDown() { return true; }
     @Override protected boolean onDownKeyDown() { return true; }
     @Override protected boolean onEnterKeyDown() { return true; }
     @Override protected boolean onPlayKeyDown() { return true; }
     @Override protected boolean onMenuKeyDown() { return true; }
-    @Override protected boolean onUpKeyUp() { selected = 0; updateSelection(); return true; }
-    @Override protected boolean onDownKeyUp() { selected = 1; updateSelection(); return true; }
+    @Override protected boolean onUpKeyUp() { selected = (selected + 2) % 3; updateSelection(); return true; }
+    @Override protected boolean onDownKeyUp() { selected = (selected + 1) % 3; updateSelection(); return true; }
     @Override protected boolean onEnterKeyUp() {
-        if (selected == 0) openCamera(); else openGallery();
+        if (selected == 0) openCamera(); else if (selected == 1) openGallery(); else openExposure();
         return true;
     }
     @Override protected boolean onPlayKeyUp() { openGallery(); return true; }

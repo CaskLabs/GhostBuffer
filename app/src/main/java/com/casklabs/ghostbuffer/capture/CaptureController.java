@@ -16,6 +16,9 @@ import java.util.List;
  * Safely coordinates thread access, prevents stale callbacks when paused, and provides error recovery.
  */
 public class CaptureController implements FrameReader.Listener, CaptureWriter.Listener {
+    public interface CameraAdjustment {
+        void run();
+    }
     public enum State {
         IDLE,
         INITIALIZING,
@@ -177,6 +180,25 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             return probeManager.runSingleProbe(backend, cameraModel, cameraFirmware);
         } finally {
             if (wasRunning && isForeground) {
+                frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
+                frameReader.start();
+            }
+        }
+    }
+
+    /** Serialize camera settings with preview reads and lifecycle shutdown. */
+    public synchronized void runCameraAdjustment(CameraAdjustment adjustment, boolean resetBuffer) {
+        if (!isForeground || state != State.BUFFERING) {
+            throw new IllegalStateException("Wait until the live buffer is active");
+        }
+        if (resetBuffer && frameReader != null) frameReader.stop();
+        try {
+            // A native frame read may outlive the reader's bounded join timeout.
+            synchronized (backend) { adjustment.run(); }
+        } finally {
+            // Even a partially applied setting must not mix old and new exposure frames.
+            if (resetBuffer) ringBuffer.clear();
+            if (resetBuffer && isForeground && state == State.BUFFERING) {
                 frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
                 frameReader.start();
             }

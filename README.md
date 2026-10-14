@@ -47,12 +47,12 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Ability to delete unwanted sessions directly from the camera.
 
 - **Single-Frame Probe Diagnostic Mode:**
-  - A hardware probe remains accessible via the `Fn` button.
+  - Hold `Fn` for a hardware probe; a short press opens exposure controls.
   - Serialized execution pauses live capture during probe to eliminate thread contention.
   - Validates real decodable baseline JPEGs and writes diagnostic reports and sample JPEGs to `<SD Card>/GHOSTBUF/PROBE/`.
 
 - **Camera Menu:**
-  - Pressing **Menu** opens a compact Camera / Gallery menu. Legacy demo tools are hidden.
+  - Pressing **Menu** opens a compact Camera / Gallery / Exposure menu. Legacy demo tools are hidden.
 
 ---
 
@@ -65,9 +65,37 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 | **Shutter (S2 - Full Press)** | Normal: Freeze buffer & save snapshot / Error state: Retry Save |
 | **Shutter (S1 - Half Press)** | Autofocus |
 | **Play** | Open GhostBuffer Gallery |
-| **Menu** | Open Camera / Gallery menu |
-| **Fn** | Run Single-Frame Hardware Probe test (serialized with preview) |
+| **Menu** | Open Camera / Gallery / Exposure menu |
+| **Fn / Center** | Open exposure controls; hold Fn for 0.8 seconds for the hardware probe |
 | **Trash / Delete (SK2)** | Normal: Exit application / Error state: Discard snapshot & resume buffer |
+
+### Exposure Controls
+
+The exposure panel opens over the live view without opening a second camera.
+Use **Up / Down** to select a row, **Left / Right** to change its value and
+**Center** to restore automatic control (or neutral **0 EV**). **Fn, Menu,
+Play or Delete** closes the panel. Touch controls provide the same actions.
+
+| Setting | Manual control | Center action |
+|---|---|---|
+| Exposure mode | Supported P / A / S / M modes | P automation and Auto ISO where available |
+| Shutter speed | Native camera steps; selects S or M as needed | Auto shutter while retaining the aperture mode |
+| Aperture | Native lens steps; selects A or M as needed | Auto aperture while retaining the shutter mode |
+| ISO | Values reported by the camera, including Auto when supported | Auto ISO |
+| Exposure compensation | Camera-reported range and EV step | Neutral 0 EV |
+| White balance | Camera-reported presets | Auto white balance |
+
+Camera settings are inherited when opening the controls; opening the panel does
+not force manual exposure. Lenses without electronic aperture control show
+**Lens ring**, and their aperture must be adjusted physically. Unavailable
+controls are dimmed. EV compensation in M is offered only with Auto ISO and
+camera-reported support. Each exposure change starts a fresh frame buffer so a
+capture does not combine frames from different settings. Setting writes are
+serialized with native preview reads and rejected while paused or saving.
+
+The native controls use the [OpenMemories CameraEx API](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraEx%24ParametersModifier.j);
+shutter/aperture step methods and Auto ISO semantics are demonstrated by
+[BetterManual](https://github.com/obs1dium/BetterManual).
 
 ### Gallery Mode
 
@@ -204,71 +232,14 @@ Other PMCA-compatible cameras:
 
 ---
 
-## License
-
-This project is open-source under the [MIT License](LICENSE.txt) compatible with the OpenMemories ecosystem.
-
----
-
-## V1 Review & Remediations
-
-All findings identified in the V1 review have been remediated and verified through unit tests:
-
-### Remediated Findings
-
-1. **P1.1 – Late save callbacks & paused state re-activation: RESOLVED**
-   - Implemented `isForeground` state guard in `CaptureController`. When an asynchronous save completes while the app is paused, the controller transitions to `PAUSED` instead of `REVIEW` / `BUFFERING`.
-   - `resumeBuffering()` and `discardSnapshotAndResume()` refuse to start buffering while the activity is paused or in background.
-   - Detached pending UI callbacks in `GhostBufferActivity.onPause()`.
-
-2. **P1.2 – Camera & sequence access serialization & shutdown guarantee: RESOLVED**
-   - Thread safety: synchronized all methods in `SonyPreviewBackend` to prevent race conditions on `CameraSequence`.
-   - `FrameReader.stop()` reliably waits for background reader threads to exit (up to 1500 ms) before clearing references.
-   - Probes are serialized through `CaptureController.runProbe()` which safely stops the preview reader before running the probe and resumes preview afterwards.
-   - Added guard preventing multiple concurrent probe worker threads.
-
-3. **P1.3 – Surface lifecycle synchronization: RESOLVED**
-   - In `GhostBufferActivity`, camera preview display and `CaptureController` are only started once a valid surface is confirmed (`surfaceCreated`).
-   - Clean shutdown occurs when `surfaceDestroyed` is invoked.
-
-4. **P1.4 – Explicit simulation mode & real probe validation: RESOLVED**
-   - Removed silent fallback to `FakePreviewBackend` when camera open fails on hardware; errors are explicitly reported to the user.
-   - Simulation mode is explicitly badged on the HUD with `[SIM]`.
-   - `FakePreviewBackend` generates valid, decodable standard baseline JPEGs.
-   - `GhostProbeManager` validates decodability using SOI/EOI, `BitmapFactory`, JVM `ImageIO`, and SOF0 frame header inspection via `verifyJpegDecodable()`.
-
-5. **P1.5 – Incomplete session visibility & atomic manifest persistence: RESOLVED**
-   - `MANIFEST.JSN` is written atomically using `MANIFEST.TMP` before renaming, with sync where supported.
-   - The `COMPLETE` marker is written after all frames and the manifest are closed; sync is skipped on Sony SD storage.
-   - `CaptureSession.loadAllSessions()` discovers sessions even if `MANIFEST.JSN` is missing or corrupted, reconstructing session contents from surviving `F*.JPG` files (legacy `frame_*.jpg` and `manifest.json` formats remain readable within the captures directory).
-   - Incomplete and partially damaged sessions are visibly flagged with `[INCOMPLETE]` badges in the gallery.
-
-6. **P2.6 – Byte budget enforcement: RESOLVED**
-   - `FrameRingBuffer.push()` performs upfront budget checks. Oversized frames that exceed `maxByteBudget` are rejected immediately without evicting or corrupting existing buffer frames.
-
-7. **P2.7 – Error recovery paths in UI: RESOLVED**
-   - In `ERROR` state, the UI provides two recovery actions:
-     - **Shutter button**: Triggers `controller.retrySave()` to retry persisting the frozen snapshot.
-     - **Delete button**: Triggers `controller.discardSnapshotAndResume()` to discard the failed snapshot and safely resume live rolling buffering.
-   - `FrameReader` tracks frame arrival and notifies `onReaderStale()` if frames stall for more than 2000 ms, clearing stale statistics.
-
-8. **P2.8 – Accurate metadata (App Version & UTC time): RESOLVED**
-   - `app_version` in `CaptureManifest` is populated strictly from `BuildConfig.VERSION_NAME`.
-   - `camera_firmware` is tracked as a distinct metadata field.
-   - `formatIso8601()` and `generateSessionId()` explicitly enforce UTC (`TimeZone.getTimeZone("UTC")`), ensuring accurate time across all local camera timezones.
-
-9. **P2.9 – Gallery missing-frame handling & background I/O: RESOLVED**
-   - `GhostGalleryActivity` detaches images before recycling and decodes on one background worker with display-sized memory bounds. Stale callbacks are discarded after navigation or pause.
-   - Missing or corrupted frames display a clear error placeholder.
-   - Session discovery and recursive deletion are offloaded from the UI thread to background worker threads.
-
-10. **P2.10 – Build dependencies & documentation alignment: RESOLVED**
-    - Corrected license documentation in `README.md` to MIT.
-    - The **Menu** button opens `MainActivity`, now limited to Camera and Gallery.
-    - Updated documentation of camera key bindings, dynamic version naming, and error recovery actions.
-
 ### Sony SD-card compatibility
 
 The 8.3-name and unsupported-sync constraints are documented in [Recipe Lab’s SD-storage fix](https://github.com/voxivoid/recipe-lab-sony-pmca/commit/e5e7949). A regression test rejects every incompatible file-write path, including temporary files, and exercises captures, collisions, probes and incomplete-session recovery.
 
 Launcher icon source and generation prompt: [assets/icon/README.md](assets/icon/README.md).
+
+---
+
+## License
+
+This project is open-source under the [MIT License](LICENSE.txt) compatible with the OpenMemories ecosystem.

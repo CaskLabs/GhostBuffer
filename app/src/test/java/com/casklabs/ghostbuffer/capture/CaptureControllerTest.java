@@ -56,6 +56,51 @@ public class CaptureControllerTest {
     }
 
     @Test
+    public void testReadingExposurePreservesBufferedFrameSequence() throws Exception {
+        controller.start(null);
+        Thread.sleep(350);
+        long sequenceBefore = ringBuffer.getNewest().getSequence();
+        int countBefore = ringBuffer.size();
+        controller.runCameraAdjustment(new CaptureController.CameraAdjustment() {
+            @Override public void run() {}
+        }, false);
+        assertTrue("Reading settings must keep the pre-trigger frames", ringBuffer.size() >= countBefore);
+        Thread.sleep(150);
+        assertTrue("Reading settings must keep the existing frame reader", ringBuffer.getNewest().getSequence() > sequenceBefore);
+    }
+
+    @Test
+    public void testExposureAdjustmentFailureKeepsPreviewRunning() throws Exception {
+        controller.start(null);
+        Thread.sleep(200);
+        assertTrue(ringBuffer.size() > 0);
+        try {
+            controller.runCameraAdjustment(new CaptureController.CameraAdjustment() {
+                @Override public void run() { throw new IllegalArgumentException("Unsupported camera setting"); }
+            }, true);
+            fail("Native-setting errors must reach the exposure UI");
+        } catch (IllegalArgumentException expected) {}
+        assertEquals(CaptureController.State.BUFFERING, controller.getState());
+        Thread.sleep(200);
+        assertTrue("Preview must resume even after a rejected exposure setting", ringBuffer.size() > 0);
+    }
+
+    @Test
+    public void testExposureChangesCannotRunAfterGalleryPause() {
+        controller.start(null);
+        controller.pause();
+        final AtomicInteger changes = new AtomicInteger();
+        try {
+            controller.runCameraAdjustment(new CaptureController.CameraAdjustment() {
+                @Override public void run() { changes.incrementAndGet(); }
+            }, true);
+            fail("A released camera must never receive a setting write");
+        } catch (IllegalStateException expected) {}
+        assertEquals(0, changes.get());
+        assertEquals(CaptureController.State.PAUSED, controller.getState());
+    }
+
+    @Test
     public void testRepeatedSurfaceStartDoesNotReopenCameraSequence() throws Exception {
         final AtomicInteger opens = new AtomicInteger();
         backend = new FakePreviewBackend() {
