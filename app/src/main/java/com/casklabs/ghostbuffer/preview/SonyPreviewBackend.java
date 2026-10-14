@@ -35,6 +35,8 @@ public class SonyPreviewBackend implements PreviewBackend {
         if (!(cameraContext instanceof CameraEx)) {
             throw new IllegalArgumentException("Expected CameraEx instance");
         }
+        if (this.cameraEx == cameraContext && cameraSequence != null) return;
+        close();
         this.cameraEx = (CameraEx) cameraContext;
         Logger.info("Opening Sony CameraSequence...");
         this.cameraSequence = CameraSequence.open(cameraEx);
@@ -46,6 +48,7 @@ public class SonyPreviewBackend implements PreviewBackend {
         if (cameraSequence == null) {
             throw new IllegalStateException("CameraSequence not open");
         }
+        if (sequenceStarted) return;
 
         Logger.info("Configuring CameraSequence: " + width + "x" + height);
         CameraSequence.Options options = new CameraSequence.Options();

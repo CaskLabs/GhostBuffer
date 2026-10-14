@@ -1,0 +1,12 @@
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:drawable="@drawable/menu_card_selected" />
+    <item android:state_selected="true" android:drawable="@drawable/menu_card_selected" />
+    <item android:state_focused="true" android:drawable="@drawable/menu_card_selected" />
+    <item>
+        <shape>
+            <solid android:color="#1B252C" />
+            <stroke android:width="1dp" android:color="#34434D" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+</selector>

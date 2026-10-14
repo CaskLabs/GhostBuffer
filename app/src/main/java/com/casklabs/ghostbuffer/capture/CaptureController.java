@@ -108,6 +108,8 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         this.isForeground = true;
         this.currentCameraContext = cameraContext;
 
+        if (state == State.BUFFERING && frameReader != null && frameReader.isRunning()) return;
+
         if (state == State.SAVING) {
             pausedDuringSave = false;
             return;
@@ -197,7 +199,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         }
 
         lastTriggerUptimeMs = GhostTime.uptimeMillis();
-        lastTriggerWallClockMs = System.currentTimeMillis();
+        lastTriggerWallClockMs = GhostTime.currentTimeMillis();
 
         // Atomically freeze buffer snapshot
         lastFrozenSnapshot = ringBuffer.freezeSnapshot(lastTriggerUptimeMs);
@@ -242,7 +244,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
     }
 
     public synchronized void retrySave() {
-        if (lastFrozenSnapshot == null || lastFrozenSnapshot.isEmpty()) {
+        if (state != State.ERROR || lastFrozenSnapshot == null || lastFrozenSnapshot.isEmpty()) {
             return;
         }
 

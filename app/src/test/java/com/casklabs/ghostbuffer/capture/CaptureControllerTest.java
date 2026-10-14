@@ -12,6 +12,7 @@ import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
@@ -52,6 +53,26 @@ public class CaptureControllerTest {
             }
         }
         f.delete();
+    }
+
+    @Test
+    public void testRepeatedSurfaceStartDoesNotReopenCameraSequence() throws Exception {
+        final AtomicInteger opens = new AtomicInteger();
+        backend = new FakePreviewBackend() {
+            @Override public void open(Object cameraContext) throws Exception {
+                opens.incrementAndGet();
+                super.open(cameraContext);
+            }
+        };
+        controller = new CaptureController(backend, ringBuffer, storage, null);
+        controller.start(null);
+        controller.start(null);
+        assertEquals("Duplicate surface callbacks must not leak camera sequences", 1, opens.get());
+        assertEquals(CaptureController.State.BUFFERING, controller.getState());
+        controller.pause();
+        controller.start(null);
+        assertEquals("Returning from gallery must reopen the released sequence", 2, opens.get());
+        assertEquals(CaptureController.State.BUFFERING, controller.getState());
     }
 
     @Test

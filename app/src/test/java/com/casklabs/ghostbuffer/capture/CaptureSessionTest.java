@@ -123,7 +123,7 @@ public class CaptureSessionTest {
         File sessionDir = writer.writeSnapshot(createSampleSnapshot(2), 1000L, time, 2000L, 10.0, 10.0, 640, 480, "ILCE-5000", "1.0.0", null);
 
         // Delete one of the frame files
-        File frame2 = new File(sessionDir, "frame_000002.jpg");
+        File frame2 = new File(sessionDir, "F0000002.JPG");
         assertTrue(frame2.delete());
 
         List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());

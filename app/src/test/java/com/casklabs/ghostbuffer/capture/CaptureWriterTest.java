@@ -8,6 +8,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -84,12 +85,12 @@ public class CaptureWriterTest {
 
         // Check frame files
         for (int i = 1; i <= 5; i++) {
-            File frameFile = new File(sessionDir, String.format("frame_%06d.jpg", i));
+            File frameFile = new File(sessionDir, String.format("F%07d.JPG", i));
             assertTrue("Frame file must exist: " + frameFile.getName(), frameFile.exists());
             assertTrue(frameFile.length() > 0);
 
             // Ensure no leftover temp files
-            File tmpFile = new File(sessionDir, String.format("frame_%06d.jpg.tmp", i));
+            File tmpFile = new File(sessionDir, String.format("F%07d.TMP", i));
             assertFalse("Temp file must be cleaned up", tmpFile.exists());
         }
 
@@ -158,5 +159,24 @@ public class CaptureWriterTest {
     @Test(expected = IllegalArgumentException.class)
     public void testEmptySnapshotThrows() throws Exception {
         writer.writeSnapshot(new ArrayList<FrameSlot>(), 0L, 0L, 2000L, 10.0, 10.0, 640, 480, "ILCE-5000", "1.0.0", null);
+    }
+
+    @Test
+    public void testSaveCanBeRetriedAfterStorageDirectoryIsRepaired() throws Exception {
+        File captures = new File(tempRootDir, "CAPTURES");
+        assertTrue(captures.createNewFile());
+        List<FrameSlot> snapshot = createSampleSnapshot(2, 10000L);
+        try {
+            writer.writeSnapshot(snapshot, 10000L, 1700000000000L, 2000L,
+                10.0, 10.0, 640, 480, "ILCE-5000", "1.0.0", null);
+            fail("Blocked storage must fail before writing frames");
+        } catch (IOException e) {
+            assertTrue(e.getMessage().contains("SD card unavailable or not writable"));
+        }
+        assertTrue(captures.delete());
+        File saved = writer.writeSnapshot(snapshot, 10000L, 1700000000000L, 2000L,
+            10.0, 10.0, 640, 480, "ILCE-5000", "1.0.0", null);
+        assertTrue(new File(saved, CaptureWriter.COMPLETE_MARKER_FILE).isFile());
+        assertEquals(1, CaptureSession.loadAllSessions(captures).size());
     }
 }

@@ -1,5 +1,6 @@
 package com.casklabs.ghostbuffer.ui;
 
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -13,261 +14,293 @@ import com.casklabs.ghostbuffer.capture.CaptureManifest;
 import com.casklabs.ghostbuffer.capture.CaptureSession;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
 import com.github.ma1co.pmcademo.app.BaseActivity;
+import com.github.ma1co.pmcademo.app.Logger;
 
 import java.io.File;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
-/**
- * Gallery viewer for browsing captured GhostBuffer sessions and inspecting individual frames.
- * Offloads filesystem I/O to background threads, clears views before decode, and flags incomplete sessions.
- */
+/** Gallery with serialized disk access, bounded image decoding and lifecycle-safe callbacks. */
 public class GhostGalleryActivity extends BaseActivity {
+    public static final String EXTRA_STORAGE_ROOT = "ghostbuffer.storageRoot";
     private GhostStorage storage;
     private List<CaptureSession> sessions;
-    private int currentSessionIndex = 0;
-    private int currentFrameIndex = 0;
-
+    private int currentSessionIndex;
+    private int currentFrameIndex;
     private ImageView imageView;
     private TextView tvSession;
     private TextView tvFrameInfo;
     private TextView tvEmpty;
     private Bitmap currentBitmap;
     private Handler uiHandler;
-    private boolean isLoading = false;
+    private final ThreadPoolExecutor worker = new ThreadPoolExecutor(1, 1, 0L,
+        TimeUnit.MILLISECONDS, new LinkedBlockingQueue<Runnable>());
+    private boolean active;
+    private boolean isLoading;
+    private int generation;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_ghost_gallery);
-
         uiHandler = new Handler();
-        storage = new GhostStorage();
+        String root = getIntent().getStringExtra(EXTRA_STORAGE_ROOT);
+        storage = root == null ? new GhostStorage() : new GhostStorage(new File(root));
         imageView = (ImageView) findViewById(R.id.gallery_image_view);
         tvSession = (TextView) findViewById(R.id.tv_gallery_session);
         tvFrameInfo = (TextView) findViewById(R.id.tv_gallery_frame_info);
         tvEmpty = (TextView) findViewById(R.id.tv_gallery_empty);
+    }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        active = true;
         loadSessionsAsync();
     }
 
-    private void loadSessionsAsync() {
-        if (isLoading) return;
-        isLoading = true;
-        tvSession.setText("Loading sessions...");
-        tvFrameInfo.setText("");
-        tvSession.setTextColor(Color.WHITE);
+    @Override
+    protected void onPause() {
+        active = false;
+        generation++;
+        isLoading = false;
+        worker.getQueue().clear();
+        releaseBitmap();
+        super.onPause();
+    }
 
-        new Thread(new Runnable() {
+    private void releaseBitmap() {
+        // Detach first: ImageView must never draw an already recycled bitmap.
+        imageView.setImageDrawable(null);
+        if (currentBitmap != null && !currentBitmap.isRecycled()) currentBitmap.recycle();
+        currentBitmap = null;
+    }
+
+    private void loadSessionsAsync() {
+        if (!active) return;
+        isLoading = true;
+        final int request = ++generation;
+        tvSession.setText("Loading captures...");
+        tvFrameInfo.setText("");
+        worker.execute(new Runnable() {
             @Override
             public void run() {
-                final List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());
-                uiHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        isLoading = false;
-                        sessions = loaded;
-                        if (sessions == null || sessions.isEmpty()) {
-                            tvEmpty.setVisibility(View.VISIBLE);
-                            imageView.setVisibility(View.GONE);
-                            tvSession.setText("No captures found");
-                            tvFrameInfo.setText("");
-                        } else {
-                            tvEmpty.setVisibility(View.GONE);
-                            imageView.setVisibility(View.VISIBLE);
-                            currentSessionIndex = 0;
-                            currentFrameIndex = 0;
-                            displayCurrentFrame();
+                try {
+                    final List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());
+                    uiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!active || request != generation) return;
+                            isLoading = false;
+                            sessions = loaded;
+                            if (sessions.isEmpty()) {
+                                releaseBitmap();
+                                tvEmpty.setText(R.string.gallery_empty);
+                                tvEmpty.setVisibility(View.VISIBLE);
+                                tvSession.setText("No captures yet");
+                                tvFrameInfo.setText("");
+                            } else {
+                                tvEmpty.setVisibility(View.GONE);
+                                currentSessionIndex = Math.min(currentSessionIndex, sessions.size() - 1);
+                                currentFrameIndex = 0;
+                                displayCurrentFrame();
+                            }
                         }
-                    }
-                });
+                    });
+                } catch (final RuntimeException e) {
+                    uiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!active || request != generation) return;
+                            isLoading = false;
+                            tvSession.setText("Unable to read SD card");
+                            tvEmpty.setText("Check the card, then reopen the gallery.\nPlay or Menu returns to the camera.");
+                            tvEmpty.setVisibility(View.VISIBLE);
+                            Logger.error("Gallery load failed: " + e);
+                        }
+                    });
+                }
             }
-        }, "GhostBuffer-GalleryLoader").start();
+        });
     }
 
     private void displayCurrentFrame() {
-        // 1. Always recycle and clear image view first
-        if (currentBitmap != null && !currentBitmap.isRecycled()) {
-            currentBitmap.recycle();
-            currentBitmap = null;
-        }
-        imageView.setImageDrawable(null);
-
-        if (sessions == null || sessions.isEmpty()) {
+        if (!active || isLoading || sessions == null || sessions.isEmpty()) return;
+        final CaptureSession session = sessions.get(currentSessionIndex);
+        final int count = session.getFrameCount();
+        tvSession.setText(String.format(Locale.US, "%sCapture %d / %d",
+            session.isComplete() ? "" : "INCOMPLETE · ", currentSessionIndex + 1, sessions.size()));
+        tvSession.setTextColor(Color.parseColor(session.isComplete() ? "#F2F5F7" : "#E7B75A"));
+        if (count == 0) {
+            releaseBitmap();
+            tvFrameInfo.setText("No frames in this capture");
             return;
         }
-
-        if (currentSessionIndex < 0) currentSessionIndex = 0;
-        if (currentSessionIndex >= sessions.size()) currentSessionIndex = sessions.size() - 1;
-
-        CaptureSession session = sessions.get(currentSessionIndex);
-        int frameCount = session.getFrameCount();
-
-        // Session title with incomplete badge
-        String incompleteBadge = session.isComplete() ? "" : "[INCOMPLETE] ";
-        String sessionLabel = String.format(Locale.US, "%sSession %s (%d/%d)",
-            incompleteBadge, session.getSessionId(), currentSessionIndex + 1, sessions.size());
-        tvSession.setText(sessionLabel);
-        tvSession.setTextColor(session.isComplete() ? Color.WHITE : Color.parseColor("#FFAA00"));
-
-        if (frameCount == 0) {
-            tvFrameInfo.setText("No frames found in session folder");
-            tvFrameInfo.setTextColor(Color.parseColor("#FF6666"));
-            return;
-        }
-
-        if (currentFrameIndex < 0) currentFrameIndex = 0;
-        if (currentFrameIndex >= frameCount) currentFrameIndex = frameCount - 1;
-
-        File frameFile = session.getFrameFile(currentFrameIndex);
-        boolean frameLoaded = false;
-        if (frameFile != null && frameFile.exists() && frameFile.length() > 0) {
-            try {
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                opts.inSampleSize = 1;
-                currentBitmap = BitmapFactory.decodeFile(frameFile.getAbsolutePath(), opts);
-                if (currentBitmap != null) {
-                    imageView.setImageBitmap(currentBitmap);
-                    frameLoaded = true;
+        currentFrameIndex = Math.max(0, Math.min(currentFrameIndex, count - 1));
+        final int index = currentFrameIndex;
+        final File file = session.getFrameFile(index);
+        final int request = ++generation;
+        final int maxWidth = imageView.getWidth() > 0 ? imageView.getWidth() : 640;
+        final int maxHeight = imageView.getHeight() > 0 ? imageView.getHeight() : 480;
+        tvFrameInfo.setText(String.format(Locale.US, "Frame %d / %d · Loading", index + 1, count));
+        // Retain only the latest queued frame when the user scrolls quickly.
+        worker.getQueue().clear();
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                Bitmap decoded = null;
+                try {
+                    if (file != null && file.isFile() && file.length() > 0) {
+                        BitmapFactory.Options options = new BitmapFactory.Options();
+                        options.inJustDecodeBounds = true;
+                        BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+                        if (options.outWidth > 0 && options.outHeight > 0) {
+                            options.inSampleSize = GalleryImageSize.sampleSize(options.outWidth, options.outHeight, maxWidth, maxHeight);
+                            options.inJustDecodeBounds = false;
+                            options.inPreferredConfig = Bitmap.Config.RGB_565;
+                            decoded = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    Logger.error("Gallery decode failed: " + e);
+                } catch (OutOfMemoryError e) {
+                    Logger.error("Gallery image exceeds available memory");
                 }
-            } catch (Throwable ignored) {}
-        }
-
-        CaptureManifest manifest = session.getManifest();
-        if (frameLoaded) {
-            if (manifest != null && currentFrameIndex < manifest.getFrames().size()) {
-                CaptureManifest.FrameInfo info = manifest.getFrames().get(currentFrameIndex);
-                float offsetSec = info.offsetFromTriggerMs / 1000.0f;
-                String offsetSign = offsetSec >= 0 ? "+" : "";
-                tvFrameInfo.setText(String.format(Locale.US, "Frame %d/%d (%s%.2f s | %d B)",
-                    currentFrameIndex + 1, frameCount, offsetSign, offsetSec, info.sizeBytes));
-            } else {
-                tvFrameInfo.setText(String.format(Locale.US, "Frame %d/%d", currentFrameIndex + 1, frameCount));
+                final Bitmap result = decoded;
+                uiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!active || request != generation) {
+                            if (result != null) result.recycle();
+                            return;
+                        }
+                        releaseBitmap();
+                        currentBitmap = result;
+                        if (result == null) {
+                            tvFrameInfo.setText("Frame missing or damaged");
+                            tvFrameInfo.setTextColor(Color.parseColor("#E7B75A"));
+                            return;
+                        }
+                        imageView.setImageBitmap(result);
+                        CaptureManifest.FrameInfo info = session.getManifest().getFrames().get(index);
+                        tvFrameInfo.setText(String.format(Locale.US, "Frame %d / %d · %+.2f s",
+                            index + 1, count, info.offsetFromTriggerMs / 1000.0));
+                        tvFrameInfo.setTextColor(Color.parseColor("#BCC6CC"));
+                    }
+                });
             }
-            tvFrameInfo.setTextColor(Color.parseColor("#CCCCCC"));
-        } else {
-            tvFrameInfo.setText(String.format(Locale.US, "Frame %d/%d [FILE MISSING OR DAMAGED]", currentFrameIndex + 1, frameCount));
-            tvFrameInfo.setTextColor(Color.parseColor("#FF4444"));
-        }
+        });
     }
 
-    @Override
-    protected boolean onLeftKeyUp() {
-        if (sessions != null && !sessions.isEmpty()) {
-            CaptureSession session = sessions.get(currentSessionIndex);
-            if (currentFrameIndex > 0) {
-                currentFrameIndex--;
-            } else {
-                currentFrameIndex = session.getFrameCount() - 1;
-            }
-            displayCurrentFrame();
-            return true;
-        }
-        return false;
-    }
+    @Override protected boolean onLeftKeyDown() { return true; }
+    @Override protected boolean onRightKeyDown() { return true; }
+    @Override protected boolean onUpKeyDown() { return true; }
+    @Override protected boolean onDownKeyDown() { return true; }
+    @Override protected boolean onPlayKeyDown() { return true; }
+    @Override protected boolean onMenuKeyDown() { return true; }
+    @Override protected boolean onDeleteKeyDown() { return true; }
+    @Override protected boolean onFocusKeyDown() { return true; }
+    @Override protected boolean onFocusKeyUp() { return true; }
+    @Override protected boolean onShutterKeyDown() { return true; }
+    @Override protected boolean onShutterKeyUp() { return true; }
 
     @Override
-    protected boolean onRightKeyUp() {
-        if (sessions != null && !sessions.isEmpty()) {
-            CaptureSession session = sessions.get(currentSessionIndex);
-            if (currentFrameIndex < session.getFrameCount() - 1) {
-                currentFrameIndex++;
-            } else {
-                currentFrameIndex = 0;
+    protected boolean onLeftKeyUp() { return moveFrame(-1); }
+    @Override
+    protected boolean onRightKeyUp() { return moveFrame(1); }
+    @Override
+    protected boolean onUpKeyUp() { return moveSession(-1); }
+    @Override
+    protected boolean onDownKeyUp() { return moveSession(1); }
+
+    private boolean moveFrame(int direction) {
+        if (!isLoading && sessions != null && !sessions.isEmpty()) {
+            int count = sessions.get(currentSessionIndex).getFrameCount();
+            if (count > 0) {
+                currentFrameIndex = (currentFrameIndex + direction + count) % count;
+                displayCurrentFrame();
             }
-            displayCurrentFrame();
-            return true;
         }
-        return false;
+        return true;
     }
 
-    @Override
-    protected boolean onUpKeyUp() {
-        if (sessions != null && sessions.size() > 1) {
-            if (currentSessionIndex > 0) {
-                currentSessionIndex--;
-            } else {
-                currentSessionIndex = sessions.size() - 1;
-            }
+    private boolean moveSession(int direction) {
+        if (!isLoading && sessions != null && !sessions.isEmpty()) {
+            currentSessionIndex = (currentSessionIndex + direction + sessions.size()) % sessions.size();
             currentFrameIndex = 0;
             displayCurrentFrame();
-            return true;
         }
-        return false;
-    }
-
-    @Override
-    protected boolean onDownKeyUp() {
-        if (sessions != null && sessions.size() > 1) {
-            if (currentSessionIndex < sessions.size() - 1) {
-                currentSessionIndex++;
-            } else {
-                currentSessionIndex = 0;
-            }
-            currentFrameIndex = 0;
-            displayCurrentFrame();
-            return true;
-        }
-        return false;
+        return true;
     }
 
     @Override
     protected boolean onDeleteKeyUp() {
-        // Delete current session in background
-        if (sessions != null && !sessions.isEmpty() && !isLoading) {
-            final CaptureSession session = sessions.get(currentSessionIndex);
-            isLoading = true;
-            tvSession.setText("Deleting session...");
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    deleteRecursive(session.getDirectory());
-                    uiHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            isLoading = false;
+        if (sessions == null || sessions.isEmpty() || isLoading) return true;
+        final CaptureSession session = sessions.get(currentSessionIndex);
+        final int request = ++generation;
+        isLoading = true;
+        worker.getQueue().clear();
+        releaseBitmap();
+        tvSession.setText("Deleting capture...");
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                final boolean deleted = deleteRecursive(session.getDirectory());
+                uiHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!active || request != generation) return;
+                        isLoading = false;
+                        if (deleted) {
+                            currentFrameIndex = 0;
                             loadSessionsAsync();
+                        } else {
+                            tvSession.setText("Could not delete capture");
+                            tvFrameInfo.setText("Check the SD card. Play returns to the camera.");
                         }
-                    });
-                }
-            }, "GhostBuffer-GalleryDeleter").start();
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    protected boolean onMenuKeyUp() {
-        finish();
+                    }
+                });
+            }
+        });
         return true;
     }
 
-    @Override
-    protected boolean onPlayKeyUp() {
+    @Override protected boolean onMenuKeyUp() { returnToCamera(); return true; }
+    @Override protected boolean onPlayKeyUp() { returnToCamera(); return true; }
+
+    private void returnToCamera() {
+        if (isTaskRoot()) startActivity(new Intent(this, GhostBufferActivity.class));
         finish();
-        return true;
     }
 
-    private void deleteRecursive(File fileOrDir) {
-        if (fileOrDir == null || !fileOrDir.exists()) return;
-        if (fileOrDir.isDirectory()) {
-            File[] children = fileOrDir.listFiles();
-            if (children != null) {
+    @Override public void onBackPressed() { returnToCamera(); }
+
+    private boolean deleteRecursive(File file) {
+        if (file == null || !file.exists()) return true;
+        try {
+            if (file.isDirectory()) {
+                File[] children = file.listFiles();
+                if (children == null) return false;
                 for (File child : children) {
-                    deleteRecursive(child);
+                    if (!deleteRecursive(child)) return false;
                 }
             }
+            return file.delete();
+        } catch (SecurityException e) {
+            return false;
         }
-        fileOrDir.delete();
     }
 
     @Override
     protected void onDestroy() {
+        active = false;
+        generation++;
+        worker.shutdownNow();
+        releaseBitmap();
+        // Keep posted result callbacks: their generation check must recycle decoded images.
         super.onDestroy();
-        if (currentBitmap != null && !currentBitmap.isRecycled()) {
-            currentBitmap.recycle();
-            currentBitmap = null;
-        }
-        uiHandler.removeCallbacksAndMessages(null);
     }
 }

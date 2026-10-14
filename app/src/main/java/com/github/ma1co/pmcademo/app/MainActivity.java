@@ -1,79 +1,58 @@
 package com.github.ma1co.pmcademo.app;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ListView;
 import com.casklabs.ghostbuffer.ui.GhostBufferActivity;
 import com.casklabs.ghostbuffer.ui.GhostGalleryActivity;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-
-public class MainActivity extends BaseActivity implements AdapterView.OnItemClickListener {
-    protected class ActivityListItem extends ListAdapter.ListItem {
-        private int nameResource;
-        private Class<? extends Activity> clazz;
-
-        public ActivityListItem(int nameResource, Class<? extends Activity> clazz) {
-            this.nameResource = nameResource;
-            this.clazz = clazz;
-        }
-
-        @Override
-        public String getText1() {
-            return getResources().getString(nameResource);
-        }
-
-        public Class<? extends Activity> getActivityClass() {
-            return clazz;
-        }
-    }
-
-    protected ActivityListItem activities[] = {
-        new ActivityListItem(R.string.title_activity_ghost_buffer, GhostBufferActivity.class),
-        new ActivityListItem(R.string.title_activity_ghost_gallery, GhostGalleryActivity.class),
-        new ActivityListItem(R.string.title_activity_camera, CameraActivity.class),
-        new ActivityListItem(R.string.title_activity_key_event, KeyEventActivity.class),
-        new ActivityListItem(R.string.title_activity_property, PropertyActivity.class),
-        new ActivityListItem(R.string.title_activity_time, TimeActivity.class),
-        new ActivityListItem(R.string.title_activity_wifi, WifiActivity.class),
-        new ActivityListItem(R.string.title_activity_wifi_setting, WifiSettingActivity.class),
-        new ActivityListItem(R.string.title_activity_wifi_direct, WifiDirectActivity.class),
-        new ActivityListItem(R.string.title_activity_display, DisplayActivity.class),
-        new ActivityListItem(R.string.title_activity_led, LedActivity.class),
-        new ActivityListItem(R.string.title_activity_playback, PlaybackActivity.class),
-        new ActivityListItem(R.string.title_activity_install, InstallActivity.class),
-    };
+/** Small GhostBuffer menu controlled by the camera's direction and enter keys. */
+public class MainActivity extends BaseActivity {
+    private View cameraItem;
+    private View galleryItem;
+    private int selected;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.list);
-
-        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-            @Override
-            public void uncaughtException(Thread thread, Throwable throwable) {
-                StringWriter sw = new StringWriter();
-                sw.append(throwable.toString());
-                sw.append("\n");
-                throwable.printStackTrace(new PrintWriter(sw));
-                Logger.error(sw.toString());
-
-                System.exit(0);
-            }
+        setContentView(R.layout.activity_ghost_menu);
+        cameraItem = findViewById(R.id.menu_camera);
+        galleryItem = findViewById(R.id.menu_gallery);
+        cameraItem.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { openCamera(); }
         });
-
-        ListView listView = (ListView) findViewById(R.id.listView);
-        listView.setAdapter(new ListAdapter<ActivityListItem>(this, activities));
-        listView.setOnItemClickListener(this);
+        galleryItem.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { openGallery(); }
+        });
+        updateSelection();
     }
 
-    @Override
-    public void onItemClick(AdapterView<?> adapterView, View view, int position, long id) {
-        ActivityListItem item = (ActivityListItem) adapterView.getItemAtPosition(position);
-        startActivity(new Intent(this, item.getActivityClass()));
+    private void updateSelection() {
+        cameraItem.setSelected(selected == 0);
+        galleryItem.setSelected(selected == 1);
     }
+
+    private void openCamera() {
+        if (isTaskRoot()) startActivity(new Intent(this, GhostBufferActivity.class));
+        finish();
+    }
+
+    private void openGallery() {
+        startActivity(new Intent(this, GhostGalleryActivity.class));
+        finish();
+    }
+
+    @Override protected boolean onUpKeyDown() { return true; }
+    @Override protected boolean onDownKeyDown() { return true; }
+    @Override protected boolean onEnterKeyDown() { return true; }
+    @Override protected boolean onPlayKeyDown() { return true; }
+    @Override protected boolean onMenuKeyDown() { return true; }
+    @Override protected boolean onUpKeyUp() { selected = 0; updateSelection(); return true; }
+    @Override protected boolean onDownKeyUp() { selected = 1; updateSelection(); return true; }
+    @Override protected boolean onEnterKeyUp() {
+        if (selected == 0) openCamera(); else openGallery();
+        return true;
+    }
+    @Override protected boolean onPlayKeyUp() { openGallery(); return true; }
+    @Override protected boolean onMenuKeyUp() { openCamera(); return true; }
 }

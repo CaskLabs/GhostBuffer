@@ -83,6 +83,7 @@ public class CaptureSession {
         for (File dir : files) {
             if (dir.isDirectory()) {
                 File manifestFile = new File(dir, CaptureWriter.MANIFEST_FILE);
+                if (!manifestFile.exists()) manifestFile = new File(dir, CaptureWriter.LEGACY_MANIFEST_FILE);
                 File completeMarker = new File(dir, CaptureWriter.COMPLETE_MARKER_FILE);
                 boolean hasMarker = completeMarker.exists();
 
@@ -100,12 +101,13 @@ public class CaptureSession {
                     } catch (Throwable ignored) {}
                 }
 
-                // If manifest is missing or damaged, reconstruct session from frame_*.jpg files
+                // If manifest is missing or damaged, reconstruct sessions from short JPEG names or legacy frame_*.jpg files
                 if (manifest == null) {
                     File[] frameFiles = dir.listFiles(new FilenameFilter() {
                         @Override
                         public boolean accept(File d, String name) {
-                            return name.startsWith("frame_") && name.endsWith(".jpg");
+                            return name.matches("F[0-9]{7}\\.JPG")
+                                || (name.startsWith("frame_") && name.endsWith(".jpg"));
                         }
                     });
 

@@ -13,11 +13,12 @@ import java.util.Locale;
 
 /**
  * Persists an immutable snapshot of buffered frames to disk in a dedicated session folder.
- * Writes frames atomically via .tmp files, generates manifest.json with sync, and marks
+ * Writes frames via DOS 8.3 temporary names, syncs where supported, and marks
  * completion via COMPLETE file.
  */
 public class CaptureWriter {
-    public static final String MANIFEST_FILE = "manifest.json";
+    public static final String MANIFEST_FILE = "MANIFEST.JSN";
+    public static final String LEGACY_MANIFEST_FILE = "manifest.json";
     public static final String COMPLETE_MARKER_FILE = "COMPLETE";
 
     public interface Listener {
@@ -79,18 +80,16 @@ public class CaptureWriter {
             throw new IllegalArgumentException("Snapshot cannot be null or empty");
         }
 
-        File capturesDir = storage.getCapturesDir();
-        String baseSessionId = GhostStorage.generateSessionId(triggerWallClockMs);
-        String sessionId = baseSessionId;
+        File capturesDir = storage.prepareCapturesDir();
+        String sessionId = GhostStorage.generateSessionId(triggerWallClockMs);
         File sessionDir = new File(capturesDir, sessionId);
         int suffix = 1;
-        while (sessionDir.exists()) {
-            sessionId = baseSessionId + "_" + suffix++;
+        while (!sessionDir.mkdir()) {
+            if (!sessionDir.exists()) {
+                throw new IOException("Failed to create session directory: " + sessionDir.getAbsolutePath());
+            }
+            sessionId = GhostStorage.generateSessionId(triggerWallClockMs + 1000L * suffix++);
             sessionDir = new File(capturesDir, sessionId);
-        }
-
-        if (!sessionDir.mkdirs()) {
-            throw new IOException("Failed to create session directory: " + sessionDir.getAbsolutePath());
         }
 
         CaptureManifest manifest = new CaptureManifest();
@@ -115,9 +114,9 @@ public class CaptureWriter {
         int total = snapshot.size();
         for (int i = 0; i < total; i++) {
             FrameSlot slot = snapshot.get(i);
-            String filename = String.format(Locale.US, "frame_%06d.jpg", i + 1);
+            String filename = String.format(Locale.US, "F%07d.JPG", i + 1);
             File finalFile = new File(sessionDir, filename);
-            File tmpFile = new File(sessionDir, filename + ".tmp");
+            File tmpFile = new File(sessionDir, String.format(Locale.US, "F%07d.TMP", i + 1));
 
             // Write to temporary file first
             FileOutputStream fos = null;
@@ -125,7 +124,7 @@ public class CaptureWriter {
                 fos = new FileOutputStream(tmpFile);
                 fos.write(slot.getData(), 0, slot.getLength());
                 fos.flush();
-                fos.getFD().sync();
+                storage.sync(fos.getFD());
             } finally {
                 if (fos != null) {
                     try { fos.close(); } catch (IOException ignored) {}
@@ -151,15 +150,15 @@ public class CaptureWriter {
             }
         }
 
-        // Write manifest.json atomically via .tmp and fsync
+        // Close the temporary manifest before renaming; sync only where supported.
         File manifestFile = new File(sessionDir, MANIFEST_FILE);
-        File tmpManifestFile = new File(sessionDir, MANIFEST_FILE + ".tmp");
+        File tmpManifestFile = new File(sessionDir, "MANIFEST.TMP");
         FileOutputStream manifestFos = new FileOutputStream(tmpManifestFile);
         try {
             Writer writer = new OutputStreamWriter(manifestFos, "UTF-8");
             writer.write(manifest.toJsonString());
             writer.flush();
-            manifestFos.getFD().sync();
+            storage.sync(manifestFos.getFD());
         } finally {
             manifestFos.close();
         }
@@ -168,13 +167,13 @@ public class CaptureWriter {
             throw new IOException("Failed renaming temporary manifest file");
         }
 
-        // Write COMPLETE marker with fsync
+        // Mark completion only after all frames and the manifest have been closed.
         File completeMarker = new File(sessionDir, COMPLETE_MARKER_FILE);
         FileOutputStream markerFos = new FileOutputStream(completeMarker);
         try {
             markerFos.write("COMPLETE\n".getBytes("UTF-8"));
             markerFos.flush();
-            markerFos.getFD().sync();
+            storage.sync(markerFos.getFD());
         } finally {
             markerFos.close();
         }

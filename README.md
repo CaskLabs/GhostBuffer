@@ -27,9 +27,9 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Thread-safe snapshot freezing (`freezeSnapshot()`) decouples capture from background disk I/O.
 
 - **Failsafe Storage Architecture:**
-  - Saves sessions to `<SD Card>/GHOSTBUFFER/captures/<YYYYMMDD_HHmmss_SSS>/`.
-  - Atomic frame writing: images are written as temporary files (`.tmp`) and synced (`fsync`) before renaming to prevent corrupt files upon sudden power loss.
-  - Atomic manifest writing: `manifest.json` is written via `.tmp` and synchronized with `fsync()`.
+  - Saves sessions to `<SD Card>/GHOSTBUF/CAPTURES/<8-digit-session-id>/`.
+  - Frames are written to uppercase 8.3 temporary files, closed and renamed. Sync is used on supported filesystems; the Sony SD-card FUSE bridge does not implement it.
+  - The JSON manifest is written as `MANIFEST.TMP`, closed and renamed to `MANIFEST.JSN`.
   - Complete session marker: a `COMPLETE` marker file ensures partial or interrupted sessions can be reliably identified.
   - Incomplete session discovery: partial or damaged captures remain visible in the gallery with an `[INCOMPLETE]` warning indicator.
 
@@ -47,12 +47,12 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Ability to delete unwanted sessions directly from the camera.
 
 - **Single-Frame Probe Diagnostic Mode:**
-  - Dedicated hardware diagnostic runner accessible via the `Fn` button.
+  - A hardware probe remains accessible via the `Fn` button.
   - Serialized execution pauses live capture during probe to eliminate thread contention.
-  - Validates real decodable baseline JPEGs and writes diagnostic reports and sample JPEGs to `<SD Card>/GHOSTBUFFER/probe/`.
+  - Validates real decodable baseline JPEGs and writes diagnostic reports and sample JPEGs to `<SD Card>/GHOSTBUF/PROBE/`.
 
-- **Preserved PMCADemo Diagnostic Suite:**
-  - Pressing the **Menu** button opens the built-in PMCADemo diagnostics suite (Keys, Display, WiFi, Scalar Properties).
+- **Camera Menu:**
+  - Pressing **Menu** opens a compact Camera / Gallery menu. Legacy demo tools are hidden.
 
 ---
 
@@ -65,7 +65,7 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 | **Shutter (S2 - Full Press)** | Normal: Freeze buffer & save snapshot / Error state: Retry Save |
 | **Shutter (S1 - Half Press)** | Autofocus |
 | **Play** | Open GhostBuffer Gallery |
-| **Menu** | Open PMCADemo Diagnostic Suite / hardware inspection menu |
+| **Menu** | Open Camera / Gallery menu |
 | **Fn** | Run Single-Frame Hardware Probe test (serialized with preview) |
 | **Trash / Delete (SK2)** | Normal: Exit application / Error state: Discard snapshot & resume buffer |
 
@@ -74,7 +74,7 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 | Button / Control | Action |
 |---|---|
 | **D-Pad Left / Right** | Previous / Next frame in session |
-| **D-Pad Up / Down** | Jump 5 frames backward / forward in session |
+| **D-Pad Up / Down** | Previous / Next capture session |
 | **Trash / Delete** | Delete current session from SD card (background thread) |
 | **Menu / Play** | Return to Viewfinder |
 
@@ -82,25 +82,35 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 
 ## Storage Layout
 
-Captured data is organized under the root directory `GHOSTBUFFER` on the SD card:
+Captured data is organized under the root directory `GHOSTBUF` on the SD card.
+Sony’s SD-card FUSE bridge requires uppercase DOS 8.3 names and has no `fsync`.
+Every folder, frame, probe and temporary file follows that restriction. Session
+IDs contain eight hexadecimal digits derived from the timestamp; collisions
+advance the ID while the precise capture time is preserved in `MANIFEST.JSN`.
+The app checks the Android external-storage path and the Sony SD-card aliases
+`/storage/sdcard0`, `/mnt/sdcard` and `/sdcard` using an actual file write. It only
+uses existing storage roots and creates directories one component at a time.
+If the card is missing, locked or full, saving reports a storage error and the
+buffer remains available for retry. Capture and probe timestamps use the camera
+clock, since Sony's Android system clock may still show 1970.
 
 ```text
 <SD Card>/
-└── GHOSTBUFFER/
-    ├── captures/
-    │   └── 20261014_153000_123/
-    │       ├── frame_000001.jpg
-    │       ├── frame_000002.jpg
+└── GHOSTBUF/
+    ├── CAPTURES/
+    │   └── 6ACF9FF8/
+    │       ├── F0000001.JPG
+    │       ├── F0000002.JPG
     │       ├── ...
-    │       ├── manifest.json
+    │       ├── MANIFEST.JSN
     │       └── COMPLETE
-    ├── probe/
-    │   ├── probe_20261014_153010_123.jpg
-    │   └── probe_20261014_153010_123_report.txt
-    └── diagnostics/
+    ├── PROBE/
+    │   ├── 6ACFA002.JPG
+    │   └── 6ACFA002.TXT
+    └── DIAG/
 ```
 
-### Manifest Schema (`manifest.json`)
+### Manifest Schema (`MANIFEST.JSN`)
 
 ```json
 {
@@ -108,9 +118,9 @@ Captured data is organized under the root directory `GHOSTBUFFER` on the SD card
   "app_version": "1.0.0",
   "camera_model": "ILCE-5000",
   "camera_firmware": "1.10",
-  "session_id": "20261014_153000_123",
+  "session_id": "6ACF9FF8",
   "created_at": "2026-10-14T15:30:00.123Z",
-  "trigger_time_ms": 50230,
+  "trigger_time_ms": 1791991800123,
   "buffer_duration_ms": 2000,
   "actual_duration_ms": 1950,
   "target_fps": 10.0,
@@ -120,7 +130,7 @@ Captured data is organized under the root directory `GHOSTBUFFER` on the SD card
   "frame_count": 20,
   "frames": [
     {
-      "filename": "frame_000001.jpg",
+      "filename": "F0000001.JPG",
       "sequence": 101,
       "size_bytes": 45120,
       "offset_from_trigger_ms": -1950,
@@ -228,9 +238,9 @@ All findings identified in the V1 review have been remediated and verified throu
    - `GhostProbeManager` validates decodability using SOI/EOI, `BitmapFactory`, JVM `ImageIO`, and SOF0 frame header inspection via `verifyJpegDecodable()`.
 
 5. **P1.5 – Incomplete session visibility & atomic manifest persistence: RESOLVED**
-   - `manifest.json` is written atomically using a `.tmp` file and explicit `fsync()` before renaming.
-   - The `COMPLETE` marker is flushed with `fsync()`.
-   - `CaptureSession.loadAllSessions()` discovers sessions even if `manifest.json` is missing or corrupted, reconstructing session contents from surviving `frame_*.jpg` files.
+   - `MANIFEST.JSN` is written atomically using `MANIFEST.TMP` before renaming, with sync where supported.
+   - The `COMPLETE` marker is written after all frames and the manifest are closed; sync is skipped on Sony SD storage.
+   - `CaptureSession.loadAllSessions()` discovers sessions even if `MANIFEST.JSN` is missing or corrupted, reconstructing session contents from surviving `F*.JPG` files (legacy `frame_*.jpg` and `manifest.json` formats remain readable within the captures directory).
    - Incomplete and partially damaged sessions are visibly flagged with `[INCOMPLETE]` badges in the gallery.
 
 6. **P2.6 – Byte budget enforcement: RESOLVED**
@@ -248,11 +258,17 @@ All findings identified in the V1 review have been remediated and verified throu
    - `formatIso8601()` and `generateSessionId()` explicitly enforce UTC (`TimeZone.getTimeZone("UTC")`), ensuring accurate time across all local camera timezones.
 
 9. **P2.9 – Gallery missing-frame handling & background I/O: RESOLVED**
-   - `GhostGalleryActivity` recycles and clears the current bitmap before decoding the next frame to prevent stale images.
+   - `GhostGalleryActivity` detaches images before recycling and decodes on one background worker with display-sized memory bounds. Stale callbacks are discarded after navigation or pause.
    - Missing or corrupted frames display a clear error placeholder.
    - Session discovery and recursive deletion are offloaded from the UI thread to background worker threads.
 
 10. **P2.10 – Build dependencies & documentation alignment: RESOLVED**
     - Corrected license documentation in `README.md` to MIT.
-    - Routed the **Menu** button to `MainActivity` so users can access the PMCADemo hardware diagnostic suite.
+    - The **Menu** button opens `MainActivity`, now limited to Camera and Gallery.
     - Updated documentation of camera key bindings, dynamic version naming, and error recovery actions.
+
+### Sony SD-card compatibility
+
+The 8.3-name and unsupported-sync constraints are documented in [Recipe Lab’s SD-storage fix](https://github.com/voxivoid/recipe-lab-sony-pmca/commit/e5e7949). A regression test rejects every incompatible file-write path, including temporary files, and exercises captures, collisions, probes and incomplete-session recovery.
+
+Launcher icon source and generation prompt: [assets/icon/README.md](assets/icon/README.md).

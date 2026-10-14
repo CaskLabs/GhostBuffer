@@ -14,17 +14,17 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentTop="true"
-        android:background="#99000000"
+        android:background="#D91B252C"
         android:orientation="horizontal"
-        android:padding="8dp">
+        android:padding="10dp">
 
         <TextView
             android:id="@+id/tv_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/status_initializing"
-            android:textColor="#00FFCC"
-            android:textSize="18sp"
+            android:textColor="#72DDD0"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView
@@ -34,16 +34,18 @@
             android:layout_weight="1"
             android:gravity="right"
             android:text="0.0 s | 0 frames | -- FPS"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+            android:textColor="#F2F5F7"
+            android:textSize="14sp" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/center_message_container"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_centerInParent="true"
-        android:background="#CC000000"
+        android:layout_marginLeft="24dp"
+        android:layout_marginRight="24dp"
+        android:background="@drawable/message_panel"
         android:gravity="center"
         android:orientation="vertical"
         android:padding="16dp"
@@ -55,7 +57,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:textColor="#FFFF00"
-            android:textSize="20sp"
+            android:textSize="17sp"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -64,9 +66,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
-        android:background="#99000000"
+        android:background="#D91B252C"
         android:orientation="horizontal"
-        android:padding="6dp">
+        android:padding="9dp">
 
         <TextView
             android:id="@+id/tv_bottom_hint"
@@ -74,7 +76,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/hint_camera"
-            android:textColor="#CCCCCC"
+            android:textColor="#BCC6CC"
             android:textSize="13sp" />
     </LinearLayout>
 

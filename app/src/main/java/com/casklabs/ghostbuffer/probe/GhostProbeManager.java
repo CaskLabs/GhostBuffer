@@ -4,10 +4,12 @@ import android.graphics.BitmapFactory;
 import com.casklabs.ghostbuffer.preview.PreviewBackend;
 import com.casklabs.ghostbuffer.preview.PreviewFrame;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
+import com.casklabs.ghostbuffer.time.GhostTime;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
@@ -46,17 +48,13 @@ public class GhostProbeManager {
     }
 
     public ProbeResult runSingleProbe(PreviewBackend backend, String cameraModel, String firmware) {
-        File probeDir = storage.getProbeDir();
-        long now = System.currentTimeMillis();
-        String timestampStr = GhostStorage.generateSessionId(now);
-
-        File jpegFile = new File(probeDir, "probe_" + timestampStr + ".jpg");
-        File reportFile = new File(probeDir, "probe_" + timestampStr + "_report.txt");
+        long now = GhostTime.currentTimeMillis();
 
         try {
-            long startTime = System.currentTimeMillis();
+            File probeDir = storage.prepareProbeDir();
+            long startTime = GhostTime.uptimeMillis();
             PreviewFrame frame = backend.readNextFrame();
-            long duration = System.currentTimeMillis() - startTime;
+            long duration = GhostTime.uptimeMillis() - startTime;
 
             if (frame == null || frame.getLength() <= 0) {
                 return new ProbeResult(false, null, null, 0, duration, "Backend returned empty or null frame");
@@ -71,12 +69,25 @@ public class GhostProbeManager {
                 return new ProbeResult(false, null, null, length, duration, "Frame data failed JPEG decoding validation (corrupted or undecodable image stream)");
             }
 
+            // Reserve a unique 8.3 name; repeated probes within one second must not overwrite.
+            int suffix = 0;
+            File jpegFile;
+            File reportFile;
+            while (true) {
+                String id = GhostStorage.generateSessionId(now + 1000L * suffix++);
+                jpegFile = new File(probeDir, id + ".JPG");
+                reportFile = new File(probeDir, id + ".TXT");
+                if (reportFile.exists()) continue;
+                if (jpegFile.createNewFile()) break;
+                if (!jpegFile.exists()) throw new IOException("Cannot create probe JPEG: " + jpegFile);
+            }
+
             // Write JPEG file atomically
             FileOutputStream fos = new FileOutputStream(jpegFile);
             try {
                 fos.write(data, 0, length);
                 fos.flush();
-                fos.getFD().sync();
+                storage.sync(fos.getFD());
             } finally {
                 fos.close();
             }

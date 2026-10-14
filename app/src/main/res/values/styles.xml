@@ -1,0 +1,10 @@
+<resources>
+    <color name="ghost_background">#10161A</color>
+    <style name="GhostBufferTheme" parent="android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@color/ghost_background</item>
+        <item name="android:colorBackground">@color/ghost_background</item>
+        <item name="android:textColor">#F2F5F7</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
