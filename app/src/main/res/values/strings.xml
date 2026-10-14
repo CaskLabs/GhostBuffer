@@ -8,7 +8,7 @@
     <string name="status_error">ERROR</string>
     <string name="status_paused">PAUSED</string>
     <string name="status_initializing">STARTING…</string>
-    <string name="hint_camera">SHUTTER Save   PLAY Gallery   FN Exposure   MENU Views</string>
+    <string name="hint_camera">SHUTTER Save   PLAY Gallery   FN Settings   MENU Views</string>
     <string name="hint_gallery">◄ / ► Frame   ▲ / ▼ Capture   DEL Delete   PLAY Camera</string>
     <string name="gallery_empty">No captures yet\n\nSave a buffer in camera mode.\nPress Play to return.</string>
 

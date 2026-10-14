@@ -86,4 +86,25 @@ public class FrameReaderTest {
         assertTrue("Error listener must be triggered on simulated hardware failure", errorLatch.await(2, TimeUnit.SECONDS));
         reader.stop();
     }
+
+    @Test public void fatalReadErrorStopsFurtherCameraPolling() throws Exception {
+        final AtomicInteger reads = new AtomicInteger();
+        final CountDownLatch error = new CountDownLatch(1);
+        FakePreviewBackend failing = new FakePreviewBackend() {
+            @Override public PreviewFrame readNextFrame() throws Exception {
+                reads.incrementAndGet();
+                throw new java.io.IOException("Oversized preview frame");
+            }
+        };
+        reader = new FrameReader(failing, ringBuffer, 20, new FrameReader.Listener() {
+            @Override public void onFrameRead(FrameSlot slot, float fps, int count, long duration) {}
+            @Override public void onReaderError(Throwable failure) { error.countDown(); }
+            @Override public void onReaderStale() {}
+        });
+        reader.start();
+        assertTrue(error.await(1, TimeUnit.SECONDS));
+        Thread.sleep(100);
+        assertFalse(reader.isRunning());
+        assertEquals("A failed stream must not keep allocating or querying camera frames", 1, reads.get());
+    }
 }

@@ -121,6 +121,8 @@ public class FrameReader implements Runnable {
                     if (listener != null) {
                         listener.onReaderError(t);
                     }
+                    running = false;
+                    break;
                 }
             }
 

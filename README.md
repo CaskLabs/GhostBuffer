@@ -2,7 +2,7 @@
 
 **GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible cameras. It has been tested on the **Sony α5000 (ILCE-5000)**; other models have not yet been tested with GhostBuffer.
 
-> **Status (October 2026):** All 10 architectural and lifecycle remediations from the V1 review have been fully implemented and verified with 28 automated unit tests. The build produces a clean, runnable APK targeting Android 2.3.3 (Gingerbread API 10). See [V1 Review & Remediations](#v1-review--remediations) for detailed resolution of each finding.
+> **Status (October 2026):** All 10 architectural and lifecycle remediations from the V1 review have been fully implemented and verified with 79 automated unit tests. The build produces a clean, runnable APK targeting Android 2.3.3 (Gingerbread API 10). See [V1 Review & Remediations](#v1-review--remediations) for detailed resolution of each finding.
 
 ---
 
@@ -10,7 +10,7 @@
 
 Traditional cameras only begin recording after the shutter is pressed, often missing spontaneous, high-speed, or unpredictable moments (e.g., lightning strikes, wildlife actions, sports milestones).
 
-GhostBuffer solves this by maintaining a continuous rolling ring buffer in memory. The application polls the live preview stream at a target rate of 10 FPS, retaining up to **2000 ms (2 seconds)** in RAM. When you press the physical shutter button, the pre-trigger buffer is instantly frozen and persisted to your SD card.
+GhostBuffer solves this by maintaining a continuous rolling ring buffer in memory. The application polls the live preview stream at up to 10 FPS, retaining up to **2000 ms (2 seconds)** in RAM. Higher-resolution settings use lower polling rates to reduce memory and processing pressure. When you press the physical shutter button, the pre-trigger buffer is instantly frozen and persisted to your SD card.
 
 ---
 
@@ -18,7 +18,7 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 
 - **Rolling Pre-Trigger Ring Buffer:**
   - Continuously retains up to 2 seconds of high-speed preview frames in RAM.
-  - Strict byte-budget enforcement: rejects oversized incoming frames without corrupting the buffer, maintaining a 3 MiB JPEG payload budget and a 25-frame limit.
+  - Strict byte-budget enforcement: rejects oversized incoming frames without corrupting the buffer, with a 3–8 MiB JPEG payload budget based on the app's maximum heap size and a 25-frame limit. The budget reserves space for the separate frozen snapshot and the UI; it can shorten the effective buffer duration for large JPEGs.
   - Time-window head eviction ensures oldest frames roll over seamlessly.
 
 - **Zero Shutter Lag & Latching:**
@@ -65,19 +65,20 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 | **Shutter (S2 - Full Press)** | Normal: Freeze buffer & save snapshot / Error state: Retry Save |
 | **Shutter (S1 - Half Press)** | Autofocus |
 | **Play** | Open GhostBuffer Gallery |
-| **Menu** | Open Camera / Gallery / Exposure menu |
-| **Fn / Center** | Open exposure controls; hold Fn for 0.8 seconds for the hardware probe |
+| **Menu** | Open Camera / Gallery / Settings menu |
+| **Fn / Center** | Open camera settings; hold Fn for 0.8 seconds for the hardware probe |
 | **Trash / Delete (SK2)** | Normal: Exit application / Error state: Discard snapshot & resume buffer |
 
-### Exposure Controls
+### Camera Settings
 
-The exposure panel opens over the live view without opening a second camera.
+The settings panel opens over the live view without opening a second camera.
 Use **Up / Down** to select a row, **Left / Right** to change its value and
 **Center** to restore automatic control (or neutral **0 EV**). **Fn, Menu,
 Play or Delete** closes the panel. Touch controls provide the same actions.
 
 | Setting | Manual control | Center action |
 |---|---|---|
+| Resolution | 640×480 / 1280×720 / 1920×1080 | Default 640×480 |
 | Exposure mode | Supported P / A / S / M modes | P automation and Auto ISO where available |
 | Shutter speed | Native camera steps; selects S or M as needed | Auto shutter while retaining the aperture mode |
 | Aperture | Native lens steps; selects A or M as needed | Auto aperture while retaining the shutter mode |
@@ -96,6 +97,30 @@ serialized with native preview reads and rejected while paused or saving.
 The native controls use the [OpenMemories CameraEx API](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/hardware/CameraEx%24ParametersModifier.j);
 shutter/aperture step methods and Auto ISO semantics are demonstrated by
 [BetterManual](https://github.com/obs1dium/BetterManual).
+
+#### Image Resolution
+
+Select **Resolution** using Up/Down and change the requested size using Left/Right
+or the −/+ buttons. The choice is remembered between app starts. Center restores
+640×480. Polling targets are 10 FPS at 640×480, 5 FPS at 1280×720 and 3 FPS at
+1920×1080; actual rates depend on the camera.
+
+The **Active** line shows the dimensions read from a real JPEG, not just the
+requested setting. Larger sizes are experimental and have not yet been verified
+on the α5000. The Sony live-preview API exposes size options, but its
+[available documentation](https://github.com/ma1co/OpenMemories-Framework/issues/35)
+only reports a tested 640×480 configuration on the α6000.
+
+If a camera rejects a size, ignores it or provides no usable frames, GhostBuffer
+tries the next smaller size. A fallback is shown explicitly while the requested
+choice remains selected. Returning from the gallery reuses a previously verified
+fallback in the same app process. Resolution checks run in the background and can
+be cancelled when the camera view closes.
+
+Each resolution change clears the old live buffer. Saved manifests record the
+actual JPEG dimensions and measured frame rate. Native JPEG read limits increase
+from 256 KiB at VGA to 1 MiB at 720p and 2 MiB at 1080p; the overall RAM budget
+still applies. The app saves the delivered JPEG bytes without resizing them.
 
 ### Gallery Mode
 
@@ -228,7 +253,7 @@ Other PMCA-compatible models have not yet been tested with GhostBuffer. Compatib
 
 - Uses Sony PMCA Scalar APIs provided by [OpenMemories: Framework](https://github.com/ma1co/OpenMemories-Framework).
 - Built with Gradle and Android Gradle Plugin 2.2.3.
-- Standard JUnit 4 test suite with 28 automated unit tests.
+- Standard JUnit 4 test suite with 79 automated unit tests.
 
 ---
 

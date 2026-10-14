@@ -8,13 +8,14 @@ import com.sony.scalar.hardware.DeviceBuffer;
 import com.sony.scalar.hardware.DeviceMemory;
 
 import java.nio.ByteBuffer;
+import java.io.IOException;
 
 /**
  * Hardware preview backend reading the native JPEG preview stream from
  * Sony's CameraSequence API on mirrorless cameras (ILCE-5000 / A5000).
  */
 public class SonyPreviewBackend implements PreviewBackend {
-    private static final int BUFFER_CAPACITY = 256 * 1024; // 256KB direct buffer per frame
+    private int frameCapacity = PreviewResolution.VGA.maxFrameBytes;
     private CameraEx cameraEx;
     private CameraSequence cameraSequence;
     private ByteBuffer directBuffer;
@@ -40,7 +41,6 @@ public class SonyPreviewBackend implements PreviewBackend {
         this.cameraEx = (CameraEx) cameraContext;
         Logger.info("Opening Sony CameraSequence...");
         this.cameraSequence = CameraSequence.open(cameraEx);
-        this.directBuffer = ByteBuffer.allocateDirect(BUFFER_CAPACITY);
     }
 
     @Override
@@ -50,6 +50,11 @@ public class SonyPreviewBackend implements PreviewBackend {
         }
         if (sequenceStarted) return;
 
+        frameCapacity = PreviewResolution.forDimensions(width, height).maxFrameBytes;
+        if (directBuffer == null || directBuffer.capacity() < frameCapacity) {
+            directBuffer = ByteBuffer.allocateDirect(frameCapacity);
+        }
+
         Logger.info("Configuring CameraSequence: " + width + "x" + height);
         CameraSequence.Options options = new CameraSequence.Options();
         options.setOption(CameraSequence.Options.PREVIEW_FRAME_WIDTH, width);
@@ -58,8 +63,9 @@ public class SonyPreviewBackend implements PreviewBackend {
         options.setOption(CameraSequence.Options.PREVIEW_FRAME_MAX_NUM, 1);
         options.setOption(CameraSequence.Options.PREVIEW_FRAME_RATE, 30000);
 
-        cameraSequence.startPreviewSequence(options);
+        // Also attempt to stop/release a partially started native sequence after a failure.
         sequenceStarted = true;
+        cameraSequence.startPreviewSequence(options);
         Logger.info("CameraSequence preview started");
     }
 
@@ -81,14 +87,13 @@ public class SonyPreviewBackend implements PreviewBackend {
             if (mem instanceof DeviceBuffer) {
                 DeviceBuffer devBuf = (DeviceBuffer) mem;
                 int size = devBuf.getSize();
-                if (size <= 0 || size > BUFFER_CAPACITY) {
-                    Logger.info("Frame size out of bounds: " + size);
-                    return null;
-                }
+                if (size <= 0 || size > frameCapacity) throw new IOException("JPEG exceeds frame limit: " + size);
 
                 directBuffer.clear();
                 int bytesRead = devBuf.read(directBuffer);
                 long endMs = GhostTime.uptimeMillis();
+
+                if (bytesRead != size) throw new IOException("Incomplete preview JPEG: " + bytesRead + "/" + size);
 
                 if (bytesRead > 0) {
                     byte[] data = new byte[bytesRead];

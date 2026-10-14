@@ -49,9 +49,9 @@
                 <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1" android:orientation="vertical">
                     <TextView android:includeFontPadding="false" android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:text="Exposure" android:textColor="#F2F5F7" android:textSize="18sp" android:textStyle="bold" />
+                        android:text="Settings" android:textColor="#F2F5F7" android:textSize="18sp" android:textStyle="bold" />
                     <TextView android:includeFontPadding="false" android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:text="Shutter, aperture, ISO, EV and Auto" android:textColor="#BCC6CC" android:textSize="12sp" />
+                        android:text="Resolution, exposure and Auto" android:textColor="#BCC6CC" android:textSize="12sp" />
                 </LinearLayout>
                 <TextView android:includeFontPadding="false" android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="&#8250;" android:textColor="#72DDD0" android:textSize="24sp" />

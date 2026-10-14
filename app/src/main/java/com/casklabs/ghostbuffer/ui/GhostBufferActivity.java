@@ -1,6 +1,7 @@
 package com.casklabs.ghostbuffer.ui;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Bundle;
@@ -18,6 +19,8 @@ import com.casklabs.ghostbuffer.capture.CaptureManifest;
 import com.casklabs.ghostbuffer.preview.FakePreviewBackend;
 import com.casklabs.ghostbuffer.preview.PreviewBackend;
 import com.casklabs.ghostbuffer.preview.SonyPreviewBackend;
+import com.casklabs.ghostbuffer.preview.PreviewResolution;
+import com.casklabs.ghostbuffer.preview.ResolutionPreviewBackend;
 import com.casklabs.ghostbuffer.probe.GhostProbeManager;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
 import com.casklabs.ghostbuffer.time.GhostTime;
@@ -44,14 +47,17 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     public static final String EXTRA_OPEN_EXPOSURE = "ghostbuffer.openExposure";
     private SurfaceHolder surfaceHolder;
     private CameraEx camera;
-    private boolean hasSurface = false;
-    private boolean isForeground = false;
+    private volatile boolean hasSurface = false;
+    private volatile boolean isForeground = false;
     private boolean isSimulationMode = false;
     private volatile boolean isProbing = false;
     private boolean previewStarted = false;
     private boolean navigationPending = false;
 
     private PreviewBackend previewBackend;
+    private ResolutionPreviewBackend resolutionBackend;
+    private PreviewResolution preferredResolution;
+    private SharedPreferences preferences;
     private FrameRingBuffer ringBuffer;
     private GhostStorage storage;
     private CaptureController controller;
@@ -65,8 +71,9 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     private ExposureController exposure;
     private View exposurePanel;
     private TextView exposureHint;
-    private final View[] exposureRows = new View[6];
-    private final TextView[] exposureValues = new TextView[6];
+    private TextView resolutionStatus;
+    private final View[] exposureRows = new View[7];
+    private final TextView[] exposureValues = new TextView[7];
     private int exposureSelected;
     private boolean exposureVisible;
     private boolean exposureBusy;
@@ -90,9 +97,12 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         tvCenterMessage = (TextView) findViewById(R.id.tv_center_message);
         exposurePanel = findViewById(R.id.exposure_panel);
         exposureHint = (TextView) findViewById(R.id.tv_exposure_hint);
-        int[] rows = { R.id.exposure_mode, R.id.exposure_shutter, R.id.exposure_aperture,
+        resolutionStatus = (TextView) findViewById(R.id.tv_resolution_status);
+        preferences = getSharedPreferences("ghostbuffer", MODE_PRIVATE);
+        preferredResolution = PreviewResolution.fromPreference(preferences.getString("resolution", "VGA"));
+        int[] rows = { R.id.capture_resolution, R.id.exposure_mode, R.id.exposure_shutter, R.id.exposure_aperture,
             R.id.exposure_iso, R.id.exposure_ev, R.id.exposure_wb };
-        int[] values = { R.id.exposure_mode_value, R.id.exposure_shutter_value, R.id.exposure_aperture_value,
+        int[] values = { R.id.capture_resolution_value, R.id.exposure_mode_value, R.id.exposure_shutter_value, R.id.exposure_aperture_value,
             R.id.exposure_iso_value, R.id.exposure_ev_value, R.id.exposure_wb_value };
         for (int i = 0; i < rows.length; i++) {
             final int selection = i;
@@ -125,7 +135,8 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         surfaceHolder.setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
 
         storage = new GhostStorage();
-        ringBuffer = new FrameRingBuffer();
+        ringBuffer = new FrameRingBuffer(FrameRingBuffer.DEFAULT_DURATION_MS, FrameRingBuffer.DEFAULT_MAX_SLOTS,
+            PreviewResolution.memoryBudget(Runtime.getRuntime().maxMemory()));
         probeManager = new GhostProbeManager(storage);
 
         // Detect Sony CameraSequence hardware
@@ -140,8 +151,14 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             isSimulationMode = true;
         }
 
+        resolutionBackend = new ResolutionPreviewBackend(previewBackend, new ResolutionPreviewBackend.Cancellation() {
+            @Override public boolean isCancelled() { return !isForeground || !hasSurface; }
+        });
+        previewBackend = resolutionBackend;
+
         controller = new CaptureController(previewBackend, ringBuffer, storage, this);
         controller.setAppVersion(BuildConfig.VERSION_NAME);
+        controller.setPreviewDimensions(preferredResolution.width, preferredResolution.height, preferredResolution.fps);
 
         try {
             controller.setCameraModel(getDeviceInfo().getModel());
@@ -191,6 +208,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     @Override
     protected void onPause() {
         isForeground = false;
+        resolutionBackend.cancelPending();
         exposureGeneration++;
         exposureBusy = false;
         fnHeld = false;
@@ -231,6 +249,11 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         hasSurface = false;
+        resolutionBackend.cancelPending();
+        exposureGeneration++;
+        exposureBusy = false;
+        exposureWorker.getQueue().clear();
+        closeExposure();
         previewStarted = false;
         if (controller != null) {
             controller.pause();
@@ -253,15 +276,28 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             }
         }
 
-        if (camera != null) {
-            controller.start(camera);
-        } else if (isSimulationMode) {
-            controller.start(null);
-        }
-        if (openExposureOnStart && controller.getState() == CaptureController.State.BUFFERING) {
-            openExposureOnStart = false;
-            openExposure();
-        }
+        // Resolution checks can wait for hardware frames; keep them off the UI thread.
+        final Object cameraContext = camera;
+        final int request = exposureGeneration;
+        exposureBusy = true;
+        exposureWorker.execute(new Runnable() {
+            @Override public void run() {
+                synchronized (controller) {
+                    if (!isForeground || !hasSurface || request != exposureGeneration) return;
+                    if (cameraContext != null || isSimulationMode) controller.start(cameraContext);
+                }
+                uiHandler.post(new Runnable() {
+                    @Override public void run() {
+                        if (!isForeground || !hasSurface || request != exposureGeneration) return;
+                        exposureBusy = false;
+                        if (openExposureOnStart && controller.getState() == CaptureController.State.BUFFERING) {
+                            openExposureOnStart = false;
+                            openExposure();
+                        }
+                    }
+                });
+            }
+        });
     }
 
     private void stopNormalPreview() {
@@ -372,7 +408,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         if (exposureBusy) return true;
         if (exposureVisible) { closeExposure(); return true; }
         if (controller != null && controller.getState() == CaptureController.State.ERROR) {
-            controller.discardSnapshotAndResume();
+            resumeCapture(true);
             return true;
         }
         if (isProbing || controller.getState() == CaptureController.State.SAVING) return true;
@@ -437,7 +473,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
-                if (!isForeground) return;
+                if (!isForeground || controller.getState() != newState) return;
                 String simPrefix = isSimulationMode ? "[SIM] " : "";
                 switch (newState) {
                     case BUFFERING:
@@ -521,7 +557,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                     public void run() {
                         if (isForeground && controller != null && controller.getState() == CaptureController.State.REVIEW) {
                             hideCenterMessage();
-                            controller.resumeBuffering();
+                            resumeCapture(false);
                         }
                     }
                 }, 2500);
@@ -534,6 +570,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
+                if (!isForeground || controller.getState() != CaptureController.State.ERROR) return;
                 showCenterMessage("Error:\n" + error.getMessage() + "\n\n[Shutter] Retry Save   [Delete] Discard", "#F28C82");
             }
         });
@@ -550,6 +587,26 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         centerMessageContainer.setVisibility(View.GONE);
     }
 
+    private void resumeCapture(final boolean discard) {
+        if (exposureBusy || !isForeground) return;
+        exposureBusy = true;
+        final int request = ++exposureGeneration;
+        exposureWorker.execute(new Runnable() {
+            @Override public void run() {
+                synchronized (controller) {
+                    if (!isForeground || !hasSurface || request != exposureGeneration) return;
+                    if (discard) controller.discardSnapshotAndResume();
+                    else controller.resumeBuffering();
+                }
+                uiHandler.post(new Runnable() {
+                    @Override public void run() {
+                        if (isForeground && request == exposureGeneration) exposureBusy = false;
+                    }
+                });
+            }
+        });
+    }
+
     @Override
     public void onBackPressed() {
         if (exposureBusy) return;
@@ -561,6 +618,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     @Override
     protected void onDestroy() {
         isForeground = false;
+        resolutionBackend.cancelPending();
         exposureGeneration++;
         exposureWorker.shutdownNow();
         uiHandler.removeCallbacksAndMessages(null);
@@ -576,13 +634,10 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     }
 
     private void openExposure() {
-        if (exposure == null) {
-            showCenterMessage("Exposure controls are unavailable on this camera.", "#E7B75A");
-            return;
-        }
         exposureVisible = true;
         exposurePanel.setVisibility(View.VISIBLE);
         hideCenterMessage();
+        renderExposure();
         changeExposure(0, false);
     }
 
@@ -592,12 +647,16 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     }
 
     private void changeExposure(final int direction, final boolean automatic) {
+        if (exposureSelected == 0 && (direction != 0 || automatic)) {
+            changeResolution(automatic ? PreviewResolution.VGA : preferredResolution.step(direction));
+            return;
+        }
         if (exposure == null || exposureBusy || !isForeground) return;
         exposureBusy = true;
         exposureHint.setText("Reading camera settings...");
         final int request = ++exposureGeneration;
         final ExposureController target = exposure;
-        final ExposureController.Field field = ExposureController.Field.values()[exposureSelected];
+        final ExposureController.Field field = ExposureController.Field.values()[Math.max(0, exposureSelected - 1)];
         exposureWorker.execute(new Runnable() {
             @Override public void run() {
                 String message = null;
@@ -647,14 +706,27 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     private void renderExposure() {
         for (int i = 0; i < exposureRows.length; i++) {
             exposureRows[i].setSelected(i == exposureSelected);
-            exposureValues[i].setText(exposure.value(ExposureController.Field.values()[i]));
-            exposureValues[i].setTextColor(Color.parseColor(exposure.available(ExposureController.Field.values()[i])
-                ? "#72DDD0" : "#74848E"));
+            if (i == 0) {
+                exposureValues[i].setText(preferredResolution.label());
+            } else {
+                ExposureController.Field field = ExposureController.Field.values()[i - 1];
+                exposureValues[i].setText(exposure == null ? "Unavailable" : exposure.value(field));
+                exposureValues[i].setTextColor(Color.parseColor(exposure != null && exposure.available(field)
+                    ? "#72DDD0" : "#74848E"));
+            }
         }
-        String[] help = { "Center: Auto exposure + Auto ISO", "Center: Auto shutter",
+        ResolutionPreviewBackend.Selection selected = resolutionBackend.getSelection();
+        resolutionStatus.setText(selected == null ? "Checking camera resolution..."
+            : "Active: " + selected.actualLabel() + " | up to " + selected.active.fps + " FPS"
+                + (selected.fellBack() ? " | fallback" : ""));
+        ((TextView) findViewById(R.id.exposure_auto)).setText(exposureSelected == 0 ? "Default" : "Auto / 0 EV");
+        String[] help = { "LEFT/RIGHT: Choose resolution; Center: 640x480",
+            "Center: Auto exposure + Auto ISO", "Center: Auto shutter",
             "Center: Auto aperture; manual lenses use the lens ring", "Center: Auto ISO",
             "Center: Neutral 0 EV", "Center: Auto white balance" };
-        exposureHint.setText(help[exposureSelected]);
+        exposureHint.setText(exposureSelected == 0 && selected != null && selected.fellBack()
+            ? "Requested " + selected.requested.label() + "; camera supplies " + selected.actualLabel()
+            : help[exposureSelected]);
         exposurePanel.post(new Runnable() {
             @Override public void run() {
                 if (!exposureVisible) return;
@@ -662,6 +734,40 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                 Rect bounds = new Rect();
                 row.getDrawingRect(bounds);
                 row.requestRectangleOnScreen(bounds, true);
+            }
+        });
+    }
+
+    private void changeResolution(final PreviewResolution resolution) {
+        if (exposureBusy || !isForeground) return;
+        exposureBusy = true;
+        exposureHint.setText("Checking " + resolution.label() + "...");
+        final int request = ++exposureGeneration;
+        exposureWorker.execute(new Runnable() {
+            @Override public void run() {
+                String message = null;
+                try {
+                    synchronized (controller) {
+                        if (!isForeground || request != exposureGeneration) return;
+                        controller.changePreviewResolution(resolution);
+                    }
+                    if (isForeground && request == exposureGeneration) {
+                        preferences.edit().putString("resolution", resolution.name()).commit();
+                    }
+                } catch (Exception e) {
+                    message = e.getMessage();
+                    Logger.error("Resolution change failed: " + e);
+                }
+                final String error = message;
+                uiHandler.post(new Runnable() {
+                    @Override public void run() {
+                        if (!isForeground || request != exposureGeneration) return;
+                        exposureBusy = false;
+                        if (error == null) preferredResolution = resolution;
+                        renderExposure();
+                        if (error != null) exposureHint.setText(error);
+                    }
+                });
             }
         });
     }

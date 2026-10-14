@@ -5,6 +5,9 @@ import com.casklabs.ghostbuffer.buffer.FrameRingBuffer;
 import com.casklabs.ghostbuffer.buffer.FrameSlot;
 import com.casklabs.ghostbuffer.preview.FrameReader;
 import com.casklabs.ghostbuffer.preview.PreviewBackend;
+import com.casklabs.ghostbuffer.preview.PreviewResolution;
+import com.casklabs.ghostbuffer.preview.ResolutionPreviewBackend;
+import com.casklabs.ghostbuffer.preview.JpegDimensions;
 import com.casklabs.ghostbuffer.probe.GhostProbeManager;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
 
@@ -44,7 +47,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
     private final CaptureWriter writer;
     private final StateListener listener;
 
-    private State state = State.IDLE;
+    private volatile State state = State.IDLE;
     private FrameReader frameReader;
     private boolean isForeground = false;
     private boolean pausedDuringSave = false;
@@ -55,7 +58,11 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
 
     private int previewWidth = 640;
     private int previewHeight = 480;
+    private int requestedWidth = 640;
+    private int requestedHeight = 480;
+    private int requestedFps = 10;
     private int targetFps = 10;
+    private double frozenFps;
     private String cameraModel = "ILCE-5000";
     private String cameraFirmware = "1.00";
     private String appVersion = "1.0.0";
@@ -74,7 +81,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         this.listener = listener;
     }
 
-    public synchronized State getState() {
+    public State getState() {
         return state;
     }
 
@@ -95,9 +102,49 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
     }
 
     public synchronized void setPreviewDimensions(int width, int height, int fps) {
+        this.requestedWidth = width;
+        this.requestedHeight = height;
+        this.requestedFps = fps;
         this.previewWidth = width;
         this.previewHeight = height;
         this.targetFps = fps;
+    }
+
+    private void startConfiguredPreview() throws Exception {
+        backend.startPreviewSequence(requestedWidth, requestedHeight, requestedFps);
+        if (backend instanceof ResolutionPreviewBackend) {
+            ResolutionPreviewBackend.Selection selection = ((ResolutionPreviewBackend) backend).getSelection();
+            previewWidth = selection.width;
+            previewHeight = selection.height;
+            targetFps = selection.active.fps;
+        }
+    }
+
+    /** Called on the settings worker, serialized with saves, probes and camera shutdown. */
+    public synchronized void changePreviewResolution(PreviewResolution resolution) throws Exception {
+        if (!isForeground || state != State.BUFFERING) {
+            throw new IllegalStateException("Wait until the live buffer is active");
+        }
+        if (frameReader != null) { frameReader.stop(); frameReader = null; }
+        ringBuffer.clear();
+        lastFrozenSnapshot = null;
+        int oldWidth = requestedWidth, oldHeight = requestedHeight, oldFps = requestedFps;
+        changeState(State.INITIALIZING, "Checking " + resolution.label() + "...");
+        try {
+            backend.close();
+            setPreviewDimensions(resolution.width, resolution.height, resolution.fps);
+            backend.open(currentCameraContext);
+            startConfiguredPreview();
+            frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
+            frameReader.start();
+            changeState(State.BUFFERING, "Buffer active");
+        } catch (Exception e) {
+            setPreviewDimensions(oldWidth, oldHeight, oldFps);
+            backend.close();
+            changeState(State.ERROR, "Resolution change failed: " + e.getMessage());
+            if (listener != null) listener.onError(e);
+            throw e;
+        }
     }
 
     private void changeState(State newState, String message) {
@@ -121,11 +168,12 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         changeState(State.INITIALIZING, "Initializing camera...");
         try {
             backend.open(cameraContext);
-            backend.startPreviewSequence(previewWidth, previewHeight, targetFps);
+            startConfiguredPreview();
 
             if (frameReader != null) {
                 frameReader.stop();
             }
+            ringBuffer.clear();
             frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
             frameReader.start();
 
@@ -230,6 +278,13 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             return false;
         }
 
+        // A firmware can ignore requested sizes; the saved manifest describes the JPEG itself.
+        FrameSlot first = lastFrozenSnapshot.get(0);
+        int[] dimensions = JpegDimensions.read(first.getData(), first.getLength());
+        if (dimensions != null) { previewWidth = dimensions[0]; previewHeight = dimensions[1]; }
+        long span = lastFrozenSnapshot.get(lastFrozenSnapshot.size() - 1).getReadEndMs() - first.getReadEndMs();
+        frozenFps = span > 0 ? (lastFrozenSnapshot.size() - 1) * 1000.0 / span : 0.0;
+
         changeState(State.FROZEN, "Buffer frozen (" + lastFrozenSnapshot.size() + " frames)");
         changeState(State.SAVING, "Saving...");
 
@@ -245,7 +300,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             lastTriggerWallClockMs,
             ringBuffer.getBufferDurationMs(),
             targetFps,
-            10.0,
+            frozenFps,
             previewWidth,
             previewHeight,
             cameraModel,
@@ -277,7 +332,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
             lastTriggerWallClockMs,
             ringBuffer.getBufferDurationMs(),
             targetFps,
-            10.0,
+            frozenFps,
             previewWidth,
             previewHeight,
             cameraModel,
@@ -293,11 +348,11 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
 
         if (isForeground) {
             try {
+                if (frameReader != null) { frameReader.stop(); frameReader = null; }
+                // Revalidate a fresh sequence after read errors, rather than reusing a failed stream.
+                backend.close();
                 backend.open(currentCameraContext);
-                backend.startPreviewSequence(previewWidth, previewHeight, targetFps);
-                if (frameReader != null) {
-                    frameReader.stop();
-                }
+                startConfiguredPreview();
                 frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
                 frameReader.start();
                 changeState(State.BUFFERING, "Buffer active");
@@ -320,7 +375,7 @@ public class CaptureController implements FrameReader.Listener, CaptureWriter.Li
         try {
             if (frameReader == null || !frameReader.isRunning()) {
                 backend.open(currentCameraContext);
-                backend.startPreviewSequence(previewWidth, previewHeight, targetFps);
+                startConfiguredPreview();
                 frameReader = new FrameReader(backend, ringBuffer, targetFps, this);
                 frameReader.start();
             }
