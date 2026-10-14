@@ -72,8 +72,8 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     private View exposurePanel;
     private TextView exposureHint;
     private TextView resolutionStatus;
-    private final View[] exposureRows = new View[7];
-    private final TextView[] exposureValues = new TextView[7];
+    private final View[] exposureRows = new View[8];
+    private final TextView[] exposureValues = new TextView[8];
     private int exposureSelected;
     private boolean exposureVisible;
     private boolean exposureBusy;
@@ -101,9 +101,9 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         preferences = getSharedPreferences("ghostbuffer", MODE_PRIVATE);
         preferredResolution = PreviewResolution.fromPreference(preferences.getString("resolution", "VGA"));
         int[] rows = { R.id.capture_resolution, R.id.exposure_mode, R.id.exposure_shutter, R.id.exposure_aperture,
-            R.id.exposure_iso, R.id.exposure_ev, R.id.exposure_wb };
+            R.id.exposure_iso, R.id.exposure_ev, R.id.exposure_wb, R.id.encoder_test };
         int[] values = { R.id.capture_resolution_value, R.id.exposure_mode_value, R.id.exposure_shutter_value, R.id.exposure_aperture_value,
-            R.id.exposure_iso_value, R.id.exposure_ev_value, R.id.exposure_wb_value };
+            R.id.exposure_iso_value, R.id.exposure_ev_value, R.id.exposure_wb_value, R.id.encoder_test_value };
         for (int i = 0; i < rows.length; i++) {
             final int selection = i;
             exposureRows[i] = findViewById(rows[i]);
@@ -113,6 +113,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                     if (exposureBusy) return;
                     exposureSelected = selection;
                     renderExposure();
+                    if (selection == 7) openEncoderTest();
                 }
             });
         }
@@ -647,6 +648,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     }
 
     private void changeExposure(final int direction, final boolean automatic) {
+        if (exposureSelected == 7 && (direction != 0 || automatic)) { openEncoderTest(); return; }
         if (exposureSelected == 0 && (direction != 0 || automatic)) {
             changeResolution(automatic ? PreviewResolution.VGA : preferredResolution.step(direction));
             return;
@@ -656,7 +658,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         exposureHint.setText("Reading camera settings...");
         final int request = ++exposureGeneration;
         final ExposureController target = exposure;
-        final ExposureController.Field field = ExposureController.Field.values()[Math.max(0, exposureSelected - 1)];
+        final ExposureController.Field field = ExposureController.Field.values()[exposureSelected == 7 ? 0 : Math.max(0, exposureSelected - 1)];
         exposureWorker.execute(new Runnable() {
             @Override public void run() {
                 String message = null;
@@ -708,6 +710,8 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
             exposureRows[i].setSelected(i == exposureSelected);
             if (i == 0) {
                 exposureValues[i].setText(preferredResolution.label());
+            } else if (i == 7) {
+                exposureValues[i].setText("Run test");
             } else {
                 ExposureController.Field field = ExposureController.Field.values()[i - 1];
                 exposureValues[i].setText(exposure == null ? "Unavailable" : exposure.value(field));
@@ -719,11 +723,12 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         resolutionStatus.setText(selected == null ? "Checking camera resolution..."
             : "Active: " + selected.actualLabel() + " | up to " + selected.active.fps + " FPS"
                 + (selected.fellBack() ? " | fallback" : ""));
-        ((TextView) findViewById(R.id.exposure_auto)).setText(exposureSelected == 0 ? "Default" : "Auto / 0 EV");
+        ((TextView) findViewById(R.id.exposure_auto)).setText(exposureSelected == 7 ? "Run test"
+            : exposureSelected == 0 ? "Default" : "Auto / 0 EV");
         String[] help = { "LEFT/RIGHT: Choose resolution; Center: 640x480",
             "Center: Auto exposure + Auto ISO", "Center: Auto shutter",
             "Center: Auto aperture; manual lenses use the lens ring", "Center: Auto ISO",
-            "Center: Neutral 0 EV", "Center: Auto white balance" };
+            "Center: Neutral 0 EV", "Center: Auto white balance", "Center: Test native Full-HD recording; saves SD report" };
         exposureHint.setText(exposureSelected == 0 && selected != null && selected.fellBack()
             ? "Requested " + selected.requested.label() + "; camera supplies " + selected.actualLabel()
             : help[exposureSelected]);
@@ -770,6 +775,12 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                 });
             }
         });
+    }
+
+    private void openEncoderTest() {
+        if (exposureBusy || navigationPending || isProbing || controller.getState() != CaptureController.State.BUFFERING) return;
+        navigationPending = true;
+        startActivity(new Intent(this, VideoEncoderTestActivity.class));
     }
 
     private boolean selectExposure(int direction) {

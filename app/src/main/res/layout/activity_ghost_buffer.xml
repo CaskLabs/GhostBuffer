@@ -172,6 +172,17 @@
                         android:layout_height="wrap_content" android:text="Loading..." android:textColor="#72DDD0"
                         android:textSize="15sp" android:textStyle="bold" />
                 </LinearLayout>
+                <LinearLayout android:id="@+id/encoder_test" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="34dp"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:padding="8dp"
+                    android:background="@drawable/menu_card" android:clickable="true">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:includeFontPadding="false" android:text="Video encoder test"
+                        android:textColor="#BCC6CC" android:textSize="14sp" />
+                    <TextView android:id="@+id/encoder_test_value" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:includeFontPadding="false"
+                        android:text="Run test" android:textColor="#72DDD0" android:textSize="14sp" />
+                </LinearLayout>
             </LinearLayout>
         </ScrollView>
         <TextView android:includeFontPadding="false" android:id="@+id/tv_exposure_hint" android:layout_width="match_parent"

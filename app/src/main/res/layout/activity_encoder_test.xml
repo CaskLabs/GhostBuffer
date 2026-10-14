@@ -1,0 +1,32 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <FrameLayout android:id="@+id/encoder_test_preview_container" android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical" android:padding="10dp" android:background="#10161A">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:includeFontPadding="false" android:text="Video encoder test" android:textSize="18sp"
+            android:textStyle="bold" android:textColor="#F2F5F7" android:paddingBottom="6dp" />
+        <TextView android:id="@+id/encoder_test_status" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:includeFontPadding="false"
+            android:text="Waiting for camera..." android:textSize="14sp" android:textColor="#72DDD0"
+            android:paddingBottom="6dp" />
+        <ScrollView android:id="@+id/encoder_test_scroll" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" android:scrollbars="vertical">
+            <TextView android:id="@+id/encoder_test_details" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textSize="12sp" android:textColor="#BCC6CC" />
+        </ScrollView>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:paddingTop="6dp">
+            <TextView android:id="@+id/encoder_test_run" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:minHeight="34dp"
+                android:padding="6dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:layout_marginRight="6dp" android:text="CENTER Run again" android:textColor="#72DDD0"
+                android:textSize="13sp" android:clickable="true" />
+            <TextView android:id="@+id/encoder_test_back" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1" android:minHeight="34dp"
+                android:padding="6dp" android:gravity="center" android:background="@drawable/menu_card"
+                android:text="MENU Back" android:textColor="#F2F5F7" android:textSize="13sp" android:clickable="true" />
+        </LinearLayout>
+    </LinearLayout>
+</RelativeLayout>
