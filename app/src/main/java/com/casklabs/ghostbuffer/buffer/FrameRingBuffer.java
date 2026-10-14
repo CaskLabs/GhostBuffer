@@ -1,18 +1,15 @@
 package com.casklabs.ghostbuffer.buffer;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
 /**
- * Thread-safe rolling ring buffer for JPEG preview frames.
- * Constrained by time window (duration), maximum slot count, and byte budget.
+ * Thread-safe rolling ring buffer with time-window, slot capacity, and byte budget eviction.
  */
 public class FrameRingBuffer {
-    public static final long DEFAULT_BUFFER_DURATION_MS = 2000L; // 2.0 seconds
-    public static final int DEFAULT_MAX_SLOTS = 25; // 20 frames @ 10fps + 5 margin
+    public static final long DEFAULT_DURATION_MS = 2000L;
+    public static final int DEFAULT_MAX_SLOTS = 25;
     public static final long DEFAULT_MAX_BYTE_BUDGET = 3 * 1024 * 1024L; // 3 MiB
 
     private final long bufferDurationMs;
@@ -23,7 +20,7 @@ public class FrameRingBuffer {
     private long totalBytes = 0;
 
     public FrameRingBuffer() {
-        this(DEFAULT_BUFFER_DURATION_MS, DEFAULT_MAX_SLOTS, DEFAULT_MAX_BYTE_BUDGET);
+        this(DEFAULT_DURATION_MS, DEFAULT_MAX_SLOTS, DEFAULT_MAX_BYTE_BUDGET);
     }
 
     public FrameRingBuffer(long bufferDurationMs, int maxSlots, long maxByteBudget) {
@@ -49,7 +46,7 @@ public class FrameRingBuffer {
      * or frames exceeding max capacity and byte budget.
      */
     public synchronized boolean push(byte[] data, int length, long sequence, long readStartMs, long readEndMs) {
-        if (data == null || length <= 0) {
+        if (data == null || length <= 0 || length > data.length || length > maxByteBudget) {
             return false;
         }
 
@@ -77,6 +74,10 @@ public class FrameRingBuffer {
             totalBytes -= evicted.getLength();
         }
 
+        if (totalBytes + length > maxByteBudget) {
+            return false;
+        }
+
         slots.addLast(newSlot);
         totalBytes += length;
         return true;
@@ -89,15 +90,18 @@ public class FrameRingBuffer {
     public synchronized List<FrameSlot> freezeSnapshot(long triggerMs) {
         long minTime = triggerMs - bufferDurationMs;
         List<FrameSlot> snapshot = new ArrayList<FrameSlot>();
-
         for (FrameSlot slot : slots) {
             long frameTime = slot.getReadEndMs();
             if (frameTime >= minTime && frameTime <= triggerMs) {
                 snapshot.add(slot.copy());
             }
         }
+        return snapshot;
+    }
 
-        return Collections.unmodifiableList(snapshot);
+    public synchronized void clear() {
+        slots.clear();
+        totalBytes = 0;
     }
 
     public synchronized int size() {
@@ -108,26 +112,24 @@ public class FrameRingBuffer {
         return totalBytes;
     }
 
-    /**
-     * Calculates the time duration covered by the frames currently in the buffer (in ms).
-     */
-    public synchronized long getCoveredDurationMs() {
-        if (slots.size() <= 1) {
-            return 0;
-        }
-        return Math.max(0, slots.getLast().getReadEndMs() - slots.getFirst().getReadEndMs());
-    }
-
-    public synchronized void clear() {
-        slots.clear();
-        totalBytes = 0;
+    public synchronized FrameSlot getNewest() {
+        return slots.isEmpty() ? null : slots.getLast();
     }
 
     public synchronized FrameSlot getOldest() {
         return slots.isEmpty() ? null : slots.getFirst();
     }
 
-    public synchronized FrameSlot getNewest() {
-        return slots.isEmpty() ? null : slots.getLast();
+    public synchronized long getCoveredDurationMs() {
+        if (slots.isEmpty()) {
+            return 0;
+        }
+        long oldest = slots.getFirst().getReadEndMs();
+        long newest = slots.getLast().getReadEndMs();
+        return Math.max(0, newest - oldest);
+    }
+
+    public synchronized List<FrameSlot> getSlotsReadOnly() {
+        return new ArrayList<FrameSlot>(slots);
     }
 }

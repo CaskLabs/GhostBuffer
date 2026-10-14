@@ -12,6 +12,7 @@ public class CaptureManifestTest {
         original.setVersion(1);
         original.setAppVersion("1.0.0");
         original.setCameraModel("ILCE-5000");
+        original.setCameraFirmware("1.10");
         original.setSessionId("20261014_153000_123");
         original.setCreatedAt("2026-10-14T15:30:00.123Z");
         original.setTriggerTimeMs(50000L);
@@ -30,11 +31,13 @@ public class CaptureManifestTest {
         assertNotNull(json);
         assertTrue(json.contains("20261014_153000_123"));
         assertTrue(json.contains("frame_000001.jpg"));
+        assertTrue(json.contains("1.10"));
 
         CaptureManifest parsed = CaptureManifest.fromJsonString(json);
         assertEquals(original.getVersion(), parsed.getVersion());
         assertEquals(original.getAppVersion(), parsed.getAppVersion());
         assertEquals(original.getCameraModel(), parsed.getCameraModel());
+        assertEquals(original.getCameraFirmware(), parsed.getCameraFirmware());
         assertEquals(original.getSessionId(), parsed.getSessionId());
         assertEquals(original.getCreatedAt(), parsed.getCreatedAt());
         assertEquals(original.getTriggerTimeMs(), parsed.getTriggerTimeMs());

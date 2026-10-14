@@ -10,11 +10,11 @@ import com.sony.scalar.hardware.DeviceMemory;
 import java.nio.ByteBuffer;
 
 /**
- * Hardware preview sequence backend using Sony Scalar CameraSequence API.
+ * Hardware preview backend reading the native JPEG preview stream from
+ * Sony's CameraSequence API on mirrorless cameras (ILCE-5000 / A5000).
  */
 public class SonyPreviewBackend implements PreviewBackend {
-    private static final int BUFFER_CAPACITY = 256 * 1024; // 256 KiB direct buffer
-
+    private static final int BUFFER_CAPACITY = 256 * 1024; // 256KB direct buffer per frame
     private CameraEx cameraEx;
     private CameraSequence cameraSequence;
     private ByteBuffer directBuffer;
@@ -31,7 +31,7 @@ public class SonyPreviewBackend implements PreviewBackend {
     }
 
     @Override
-    public void open(Object cameraContext) throws Exception {
+    public synchronized void open(Object cameraContext) throws Exception {
         if (!(cameraContext instanceof CameraEx)) {
             throw new IllegalArgumentException("Expected CameraEx instance");
         }
@@ -42,7 +42,7 @@ public class SonyPreviewBackend implements PreviewBackend {
     }
 
     @Override
-    public void startPreviewSequence(int width, int height, int fps) throws Exception {
+    public synchronized void startPreviewSequence(int width, int height, int fps) throws Exception {
         if (cameraSequence == null) {
             throw new IllegalStateException("CameraSequence not open");
         }
@@ -61,7 +61,7 @@ public class SonyPreviewBackend implements PreviewBackend {
     }
 
     @Override
-    public PreviewFrame readNextFrame() throws Exception {
+    public synchronized PreviewFrame readNextFrame() throws Exception {
         if (cameraSequence == null || !sequenceStarted) {
             return null;
         }
@@ -111,24 +111,22 @@ public class SonyPreviewBackend implements PreviewBackend {
     }
 
     @Override
-    public void stopPreviewSequence() {
+    public synchronized void stopPreviewSequence() {
         if (sequenceStarted && cameraSequence != null) {
             try {
-                Logger.info("Stopping CameraSequence preview...");
                 cameraSequence.stopPreviewSequence();
             } catch (Throwable t) {
-                Logger.error("Error stopping preview sequence: " + t.getMessage());
+                Logger.error("Error stopping CameraSequence: " + t.getMessage());
             }
             sequenceStarted = false;
         }
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         stopPreviewSequence();
         if (cameraSequence != null) {
             try {
-                Logger.info("Releasing CameraSequence...");
                 cameraSequence.release();
             } catch (Throwable t) {
                 Logger.error("Error releasing CameraSequence: " + t.getMessage());

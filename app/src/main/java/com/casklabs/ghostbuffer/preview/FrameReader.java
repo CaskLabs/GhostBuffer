@@ -12,6 +12,7 @@ public class FrameReader implements Runnable {
     public interface Listener {
         void onFrameRead(FrameSlot slot, float fps, int bufferSize, long coveredDurationMs);
         void onReaderError(Throwable error);
+        void onReaderStale();
     }
 
     private final PreviewBackend backend;
@@ -22,6 +23,11 @@ public class FrameReader implements Runnable {
     private volatile boolean running = false;
     private Thread workerThread;
     private long sequenceCounter = 0;
+
+    // Stale detection
+    private long lastSuccessfulFrameTimeMs = 0;
+    private static final long STALE_TIMEOUT_MS = 2000L;
+    private boolean isStale = false;
 
     // Rolling FPS tracking
     private static final int FPS_WINDOW_SIZE = 10;
@@ -38,10 +44,12 @@ public class FrameReader implements Runnable {
     }
 
     public synchronized void start() {
-        if (running) {
+        if (running && workerThread != null && workerThread.isAlive()) {
             return;
         }
         running = true;
+        isStale = false;
+        lastSuccessfulFrameTimeMs = GhostTime.uptimeMillis();
         workerThread = new Thread(this, "GhostBuffer-FrameReader");
         workerThread.start();
     }
@@ -51,14 +59,16 @@ public class FrameReader implements Runnable {
         if (workerThread != null) {
             workerThread.interrupt();
             try {
-                workerThread.join(500);
+                workerThread.join(1500);
             } catch (InterruptedException ignored) {}
-            workerThread = null;
+            if (!workerThread.isAlive()) {
+                workerThread = null;
+            }
         }
     }
 
     public boolean isRunning() {
-        return running;
+        return running && workerThread != null && workerThread.isAlive();
     }
 
     public float getCurrentFps() {
@@ -77,6 +87,9 @@ public class FrameReader implements Runnable {
                 PreviewFrame frame = backend.readNextFrame();
                 if (frame != null && running) {
                     sequenceCounter++;
+                    lastSuccessfulFrameTimeMs = GhostTime.uptimeMillis();
+                    isStale = false;
+
                     boolean accepted = ringBuffer.push(
                         frame.getData(),
                         frame.getLength(),
@@ -90,6 +103,16 @@ public class FrameReader implements Runnable {
                         if (listener != null) {
                             FrameSlot newest = ringBuffer.getNewest();
                             listener.onFrameRead(newest, currentFps, ringBuffer.size(), ringBuffer.getCoveredDurationMs());
+                        }
+                    }
+                } else if (frame == null && running) {
+                    // Check for stale stream
+                    long elapsedSinceLast = GhostTime.uptimeMillis() - lastSuccessfulFrameTimeMs;
+                    if (elapsedSinceLast > STALE_TIMEOUT_MS && !isStale) {
+                        isStale = true;
+                        currentFps = 0.0f;
+                        if (listener != null) {
+                            listener.onReaderStale();
                         }
                     }
                 }

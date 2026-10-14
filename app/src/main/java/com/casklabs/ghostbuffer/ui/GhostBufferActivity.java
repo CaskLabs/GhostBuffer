@@ -8,6 +8,8 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.widget.TextView;
+import com.github.ma1co.pmcademo.app.BuildConfig;
+import com.github.ma1co.pmcademo.app.MainActivity;
 import com.github.ma1co.pmcademo.app.R;
 import com.casklabs.ghostbuffer.buffer.FrameRingBuffer;
 import com.casklabs.ghostbuffer.capture.CaptureController;
@@ -27,10 +29,16 @@ import java.util.Locale;
 
 /**
  * Main camera live view activity running the rolling ring buffer.
+ * Synchronizes with the SurfaceView lifecycle, avoids silent fallback on hardware,
+ * serializes probes, provides explicit error recovery paths, and routes Menu key to diagnostics.
  */
 public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.Callback, CaptureController.StateListener {
     private SurfaceHolder surfaceHolder;
     private CameraEx camera;
+    private boolean hasSurface = false;
+    private boolean isForeground = false;
+    private boolean isSimulationMode = false;
+    private volatile boolean isProbing = false;
 
     private PreviewBackend previewBackend;
     private FrameRingBuffer ringBuffer;
@@ -64,58 +72,65 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         ringBuffer = new FrameRingBuffer();
         probeManager = new GhostProbeManager(storage);
 
-        // Select hardware backend if Sony CameraSequence is available, else fallback to Fake
+        // Detect Sony CameraSequence hardware
         SonyPreviewBackend sonyBackend = new SonyPreviewBackend();
         if (sonyBackend.isAvailable()) {
             Logger.info("Sony CameraSequence hardware detected: using SonyPreviewBackend");
             previewBackend = sonyBackend;
+            isSimulationMode = false;
         } else {
-            Logger.info("Sony CameraSequence not found: using FakePreviewBackend");
+            Logger.info("Sony CameraSequence not found: using FakePreviewBackend in simulation mode");
             previewBackend = new FakePreviewBackend();
+            isSimulationMode = true;
         }
 
         controller = new CaptureController(previewBackend, ringBuffer, storage, this);
+        controller.setAppVersion(BuildConfig.VERSION_NAME);
+
         try {
             controller.setCameraModel(getDeviceInfo().getModel());
-            controller.setAppVersion(getDeviceInfo().getFirmwareVersion());
+            controller.setCameraFirmware(getDeviceInfo().getFirmwareVersion());
         } catch (Throwable t) {
             controller.setCameraModel("ILCE-5000");
-            controller.setAppVersion("1.0.0");
+            controller.setCameraFirmware("1.00");
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        isForeground = true;
         surfaceHolder.addCallback(this);
 
-        try {
-            camera = CameraEx.open(0, null);
-        } catch (Throwable t) {
-            Logger.info("CameraEx.open() failed or running in emulator: " + t.getMessage());
-            camera = null;
+        if (!isSimulationMode) {
+            try {
+                camera = CameraEx.open(0, null);
+            } catch (Throwable t) {
+                Logger.error("CameraEx.open failed on hardware: " + t.getMessage());
+                camera = null;
+                showCenterMessage("Camera initialization failed:\n" + t.getMessage() + "\nCheck camera lens / mode", "#FF4444");
+                tvStatus.setText("CAMERA ERROR");
+                tvStatus.setTextColor(Color.parseColor("#FF4444"));
+                return;
+            }
         }
 
-        if (camera == null && !(previewBackend instanceof FakePreviewBackend)) {
-            previewBackend = new FakePreviewBackend();
-            controller = new CaptureController(previewBackend, ringBuffer, storage, this);
-        }
-
-        if (camera != null) {
-            controller.start(camera);
-        } else {
-            // Emulated/test start
-            controller.start(null);
+        if (hasSurface) {
+            startCameraPreviewAndController();
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        isForeground = false;
+        uiHandler.removeCallbacksAndMessages(null);
+
         if (controller != null) {
             controller.pause();
         }
 
+        stopNormalPreview();
         if (camera != null) {
             try {
                 camera.release();
@@ -129,13 +144,10 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        if (camera != null) {
-            try {
-                camera.getNormalCamera().setPreviewDisplay(holder);
-                camera.getNormalCamera().startPreview();
-            } catch (IOException e) {
-                Logger.error("Error setting preview display: " + e.getMessage());
-            }
+        hasSurface = true;
+        this.surfaceHolder = holder;
+        if (isForeground) {
+            startCameraPreviewAndController();
         }
     }
 
@@ -144,6 +156,35 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
+        hasSurface = false;
+        if (controller != null) {
+            controller.pause();
+        }
+        stopNormalPreview();
+    }
+
+    private void startCameraPreviewAndController() {
+        if (!isForeground || !hasSurface) {
+            return;
+        }
+
+        if (camera != null && surfaceHolder != null) {
+            try {
+                camera.getNormalCamera().setPreviewDisplay(surfaceHolder);
+                camera.getNormalCamera().startPreview();
+            } catch (IOException e) {
+                Logger.error("Error setting preview display: " + e.getMessage());
+            }
+        }
+
+        if (camera != null) {
+            controller.start(camera);
+        } else if (isSimulationMode) {
+            controller.start(null);
+        }
+    }
+
+    private void stopNormalPreview() {
         if (camera != null) {
             try {
                 camera.getNormalCamera().stopPreview();
@@ -174,6 +215,11 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     @Override
     protected boolean onShutterKeyDown() {
         if (controller != null) {
+            if (controller.getState() == CaptureController.State.ERROR) {
+                // Recovery: retry save
+                controller.retrySave();
+                return true;
+            }
             return controller.onShutterKeyDown();
         }
         return false;
@@ -195,7 +241,9 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
 
     @Override
     protected boolean onMenuKeyDown() {
-        openGallery();
+        // Open PMCADemo diagnostics menu
+        Intent intent = new Intent(this, MainActivity.class);
+        startActivity(intent);
         return true;
     }
 
@@ -207,11 +255,19 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
 
     @Override
     protected boolean onDeleteKeyDown() {
+        if (controller != null && controller.getState() == CaptureController.State.ERROR) {
+            // Recovery: discard failed snapshot and return to live buffer
+            controller.discardSnapshotAndResume();
+            return true;
+        }
         return true;
     }
 
     @Override
     protected boolean onDeleteKeyUp() {
+        if (controller != null && controller.getState() == CaptureController.State.ERROR) {
+            return true;
+        }
         finish();
         return true;
     }
@@ -222,36 +278,48 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
     }
 
     private void runProbe() {
-        showCenterMessage("Running single-frame probe...", "#00FFFF");
+        if (isProbing) {
+            return;
+        }
+        isProbing = true;
+        showCenterMessage("Running serialized probe...", "#00FFFF");
+
         new Thread(new Runnable() {
             @Override
             public void run() {
-                String model = "ILCE-5000";
-                String fw = "1.0.0";
                 try {
-                    model = getDeviceInfo().getModel();
-                    fw = getDeviceInfo().getFirmwareVersion();
-                } catch (Throwable ignored) {}
-
-                final GhostProbeManager.ProbeResult result = probeManager.runSingleProbe(previewBackend, model, fw);
-                uiHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (result.success) {
-                            showCenterMessage("Probe OK: " + result.frameSize + " B\n" + result.jpegFile.getName(), "#00FF88");
-                        } else {
-                            showCenterMessage("Probe ERROR:\n" + result.message, "#FF4444");
-                        }
-                        uiHandler.postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                hideCenterMessage();
+                    final GhostProbeManager.ProbeResult result = controller.runProbe(probeManager);
+                    uiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            isProbing = false;
+                            if (result.success) {
+                                String resStr = result.imageWidth > 0 ? (" (" + result.imageWidth + "x" + result.imageHeight + ")") : "";
+                                showCenterMessage("Probe PASSED: " + result.frameSize + " B" + resStr + "\n" + result.jpegFile.getName(), "#00FF88");
+                            } else {
+                                showCenterMessage("Probe FAILED:\n" + result.message, "#FF4444");
                             }
-                        }, 3000);
-                    }
-                });
+                            uiHandler.postDelayed(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (isForeground) {
+                                        hideCenterMessage();
+                                    }
+                                }
+                            }, 3500);
+                        }
+                    });
+                } catch (final Throwable t) {
+                    uiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            isProbing = false;
+                            showCenterMessage("Probe error: " + t.getMessage(), "#FF4444");
+                        }
+                    });
+                }
             }
-        }).start();
+        }, "GhostBuffer-ProbeWorker").start();
     }
 
     @Override
@@ -259,32 +327,34 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
+                String simPrefix = isSimulationMode ? "[SIM] " : "";
                 switch (newState) {
                     case BUFFERING:
-                        tvStatus.setText(R.string.status_buffering);
+                        tvStatus.setText(simPrefix + getString(R.string.status_buffering));
                         tvStatus.setTextColor(Color.parseColor("#00FFCC"));
                         hideCenterMessage();
                         break;
                     case SAVING:
-                        tvStatus.setText(R.string.status_saving);
+                        tvStatus.setText(simPrefix + getString(R.string.status_saving));
                         tvStatus.setTextColor(Color.parseColor("#FFFF00"));
                         showCenterMessage("Buffer frozen!\nSaving to SD card...", "#FFFF00");
                         break;
                     case REVIEW:
-                        tvStatus.setText(R.string.status_review);
+                        tvStatus.setText(simPrefix + getString(R.string.status_review));
                         tvStatus.setTextColor(Color.parseColor("#00FF88"));
                         break;
                     case ERROR:
-                        tvStatus.setText(R.string.status_error);
+                        tvStatus.setText(simPrefix + getString(R.string.status_error));
                         tvStatus.setTextColor(Color.parseColor("#FF4444"));
-                        showCenterMessage(message != null ? message : "An error occurred", "#FF4444");
+                        showCenterMessage((message != null ? message : "An error occurred") +
+                            "\n\n[Shutter] Retry Save   [Delete] Discard", "#FF4444");
                         break;
                     case INITIALIZING:
-                        tvStatus.setText(R.string.status_initializing);
+                        tvStatus.setText(simPrefix + getString(R.string.status_initializing));
                         tvStatus.setTextColor(Color.parseColor("#00CCFF"));
                         break;
                     case PAUSED:
-                        tvStatus.setText(R.string.status_paused);
+                        tvStatus.setText(simPrefix + getString(R.string.status_paused));
                         tvStatus.setTextColor(Color.parseColor("#AAAAAA"));
                         break;
                     case IDLE:
@@ -323,6 +393,10 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
+                if (!isForeground) {
+                    return;
+                }
+
                 showCenterMessage(
                     String.format(Locale.US, "Saved!\n%d frames in %s\n[Play] Gallery", manifest.getFrameCount(), sessionDir.getName()),
                     "#00FF88"
@@ -332,7 +406,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
                 uiHandler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        if (controller != null && controller.getState() == CaptureController.State.REVIEW) {
+                        if (isForeground && controller != null && controller.getState() == CaptureController.State.REVIEW) {
                             hideCenterMessage();
                             controller.resumeBuffering();
                         }
@@ -347,7 +421,7 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
         uiHandler.post(new Runnable() {
             @Override
             public void run() {
-                showCenterMessage("Error:\n" + error.getMessage(), "#FF4444");
+                showCenterMessage("Error:\n" + error.getMessage() + "\n\n[Shutter] Retry Save   [Delete] Discard", "#FF4444");
             }
         });
     }
@@ -360,10 +434,5 @@ public class GhostBufferActivity extends BaseActivity implements SurfaceHolder.C
 
     private void hideCenterMessage() {
         centerMessageContainer.setVisibility(View.GONE);
-    }
-
-    @Override
-    protected void setColorDepth(boolean highQuality) {
-        super.setColorDepth(false);
     }
 }

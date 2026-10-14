@@ -12,11 +12,13 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Persists frozen frame snapshots and manifests to storage safely.
+ * Persists an immutable snapshot of buffered frames to disk in a dedicated session folder.
+ * Writes frames atomically via .tmp files, generates manifest.json with sync, and marks
+ * completion via COMPLETE file.
  */
 public class CaptureWriter {
-    public static final String COMPLETE_MARKER_FILE = "COMPLETE";
     public static final String MANIFEST_FILE = "manifest.json";
+    public static final String COMPLETE_MARKER_FILE = "COMPLETE";
 
     public interface Listener {
         void onSaveProgress(int current, int total);
@@ -30,9 +32,6 @@ public class CaptureWriter {
         this.storage = storage;
     }
 
-    /**
-     * Synchronously writes a snapshot to storage.
-     */
     public File writeSnapshot(
         List<FrameSlot> snapshot,
         long triggerUptimeMs,
@@ -46,39 +45,65 @@ public class CaptureWriter {
         String appVersion,
         Listener listener
     ) throws Exception {
+        return writeSnapshot(
+            snapshot,
+            triggerUptimeMs,
+            triggerWallClockMs,
+            bufferDurationMs,
+            targetFps,
+            measuredFps,
+            frameWidth,
+            frameHeight,
+            cameraModel,
+            "",
+            appVersion,
+            listener
+        );
+    }
+
+    public File writeSnapshot(
+        List<FrameSlot> snapshot,
+        long triggerUptimeMs,
+        long triggerWallClockMs,
+        long bufferDurationMs,
+        double targetFps,
+        double measuredFps,
+        int frameWidth,
+        int frameHeight,
+        String cameraModel,
+        String cameraFirmware,
+        String appVersion,
+        Listener listener
+    ) throws Exception {
         if (snapshot == null || snapshot.isEmpty()) {
-            throw new IllegalArgumentException("Snapshot is empty");
+            throw new IllegalArgumentException("Snapshot cannot be null or empty");
         }
 
-        if (!storage.isStorageWritable()) {
-            throw new IOException("Storage is not writable or SD card missing");
-        }
-
-        String sessionId = GhostStorage.generateSessionId(triggerWallClockMs);
         File capturesDir = storage.getCapturesDir();
+        String baseSessionId = GhostStorage.generateSessionId(triggerWallClockMs);
+        String sessionId = baseSessionId;
         File sessionDir = new File(capturesDir, sessionId);
-
-        // Ensure unique directory name
         int suffix = 1;
         while (sessionDir.exists()) {
-            sessionDir = new File(capturesDir, sessionId + "_" + suffix);
-            suffix++;
+            sessionId = baseSessionId + "_" + suffix++;
+            sessionDir = new File(capturesDir, sessionId);
         }
 
         if (!sessionDir.mkdirs()) {
-            throw new IOException("Failed creating capture session directory: " + sessionDir.getAbsolutePath());
+            throw new IOException("Failed to create session directory: " + sessionDir.getAbsolutePath());
         }
 
         CaptureManifest manifest = new CaptureManifest();
-        manifest.setSessionId(sessionDir.getName());
+        manifest.setSessionId(sessionId);
         manifest.setCreatedAt(GhostStorage.formatIso8601(triggerWallClockMs));
-        manifest.setTriggerTimeMs(triggerUptimeMs);
+        manifest.setTriggerTimeMs(triggerWallClockMs);
         manifest.setBufferDurationMs(bufferDurationMs);
         manifest.setTargetFps(targetFps);
         manifest.setMeasuredFps(measuredFps);
         manifest.setFrameWidth(frameWidth);
         manifest.setFrameHeight(frameHeight);
         manifest.setCameraModel(cameraModel);
+        manifest.setCameraFirmware(cameraFirmware);
         manifest.setAppVersion(appVersion);
 
         long actualDuration = 0;
@@ -126,23 +151,32 @@ public class CaptureWriter {
             }
         }
 
-        // Write manifest.json
+        // Write manifest.json atomically via .tmp and fsync
         File manifestFile = new File(sessionDir, MANIFEST_FILE);
-        Writer writer = null;
+        File tmpManifestFile = new File(sessionDir, MANIFEST_FILE + ".tmp");
+        FileOutputStream manifestFos = new FileOutputStream(tmpManifestFile);
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(manifestFile), "UTF-8");
+            Writer writer = new OutputStreamWriter(manifestFos, "UTF-8");
             writer.write(manifest.toJsonString());
             writer.flush();
+            manifestFos.getFD().sync();
         } finally {
-            if (writer != null) {
-                try { writer.close(); } catch (IOException ignored) {}
-            }
+            manifestFos.close();
         }
 
-        // Write COMPLETE marker
-        File completeFile = new File(sessionDir, COMPLETE_MARKER_FILE);
-        if (!completeFile.createNewFile()) {
-            throw new IOException("Failed creating COMPLETE marker file");
+        if (!tmpManifestFile.renameTo(manifestFile)) {
+            throw new IOException("Failed renaming temporary manifest file");
+        }
+
+        // Write COMPLETE marker with fsync
+        File completeMarker = new File(sessionDir, COMPLETE_MARKER_FILE);
+        FileOutputStream markerFos = new FileOutputStream(completeMarker);
+        try {
+            markerFos.write("COMPLETE\n".getBytes("UTF-8"));
+            markerFos.flush();
+            markerFos.getFD().sync();
+        } finally {
+            markerFos.close();
         }
 
         if (listener != null) {
@@ -152,9 +186,6 @@ public class CaptureWriter {
         return sessionDir;
     }
 
-    /**
-     * Executes snapshot saving on an asynchronous background thread.
-     */
     public void writeSnapshotAsync(
         final List<FrameSlot> snapshot,
         final long triggerUptimeMs,
@@ -165,6 +196,36 @@ public class CaptureWriter {
         final int frameWidth,
         final int frameHeight,
         final String cameraModel,
+        final String appVersion,
+        final Listener listener
+    ) {
+        writeSnapshotAsync(
+            snapshot,
+            triggerUptimeMs,
+            triggerWallClockMs,
+            bufferDurationMs,
+            targetFps,
+            measuredFps,
+            frameWidth,
+            frameHeight,
+            cameraModel,
+            "",
+            appVersion,
+            listener
+        );
+    }
+
+    public void writeSnapshotAsync(
+        final List<FrameSlot> snapshot,
+        final long triggerUptimeMs,
+        final long triggerWallClockMs,
+        final long bufferDurationMs,
+        final double targetFps,
+        final double measuredFps,
+        final int frameWidth,
+        final int frameHeight,
+        final String cameraModel,
+        final String cameraFirmware,
         final String appVersion,
         final Listener listener
     ) {
@@ -182,6 +243,7 @@ public class CaptureWriter {
                         frameWidth,
                         frameHeight,
                         cameraModel,
+                        cameraFirmware,
                         appVersion,
                         listener
                     );

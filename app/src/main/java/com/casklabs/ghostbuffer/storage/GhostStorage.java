@@ -7,12 +7,13 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /**
- * Manages filesystem locations and storage validation for GhostBuffer.
+ * Storage manager for external SD card directories and path helpers.
  */
 public class GhostStorage {
-    public static final String GHOSTBUFFER_DIR_NAME = "GHOSTBUFFER";
+    public static final String ROOT_DIR_NAME = "GhostBuffer";
     public static final String CAPTURES_DIR_NAME = "captures";
     public static final String PROBE_DIR_NAME = "probe";
     public static final String DIAGNOSTICS_DIR_NAME = "diagnostics";
@@ -20,11 +21,12 @@ public class GhostStorage {
     private final File baseDir;
 
     public GhostStorage() {
-        this(new File(Environment.getExternalStorageDirectory(), GHOSTBUFFER_DIR_NAME));
+        File ext = Environment.getExternalStorageDirectory();
+        this.baseDir = new File(ext, ROOT_DIR_NAME);
     }
 
-    public GhostStorage(File baseDir) {
-        this.baseDir = baseDir;
+    public GhostStorage(File customBaseDir) {
+        this.baseDir = customBaseDir;
     }
 
     public File getBaseDir() {
@@ -90,11 +92,13 @@ public class GhostStorage {
 
     public static String generateSessionId(long timestampMs) {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
         return sdf.format(new Date(timestampMs));
     }
 
     public static String formatIso8601(long timestampMs) {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
         return sdf.format(new Date(timestampMs));
     }
 }

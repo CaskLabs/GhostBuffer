@@ -8,6 +8,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -90,5 +91,45 @@ public class CaptureSessionTest {
         List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());
         assertEquals(1, loaded.size());
         assertFalse("Session without COMPLETE marker must be marked incomplete", loaded.get(0).isComplete());
+    }
+
+    @Test
+    public void testRecoverSessionWithMissingManifest() throws Exception {
+        // Create an interrupted capture folder containing only frame JPEGs
+        File interruptedDir = new File(storage.getCapturesDir(), "20261014_999999_000");
+        assertTrue(interruptedDir.mkdirs());
+
+        byte[] fakeJpeg = FakePreviewBackend.createFakeJpeg(1, 1000L, 256);
+        File f1 = new File(interruptedDir, "frame_000001.jpg");
+        File f2 = new File(interruptedDir, "frame_000002.jpg");
+        FileOutputStream fos1 = new FileOutputStream(f1);
+        fos1.write(fakeJpeg);
+        fos1.close();
+        FileOutputStream fos2 = new FileOutputStream(f2);
+        fos2.write(fakeJpeg);
+        fos2.close();
+
+        List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());
+        assertEquals("Should recover interrupted session without manifest", 1, loaded.size());
+        CaptureSession recovered = loaded.get(0);
+        assertFalse("Recovered session must not be marked complete", recovered.isComplete());
+        assertEquals("Recovered session must list found frames", 2, recovered.getFrameCount());
+        assertEquals("frame_000001.jpg", recovered.getFrameFile(0).getName());
+    }
+
+    @Test
+    public void testSessionWithMissingFrameFiles() throws Exception {
+        long time = 1700000030000L;
+        File sessionDir = writer.writeSnapshot(createSampleSnapshot(2), 1000L, time, 2000L, 10.0, 10.0, 640, 480, "ILCE-5000", "1.0.0", null);
+
+        // Delete one of the frame files
+        File frame2 = new File(sessionDir, "frame_000002.jpg");
+        assertTrue(frame2.delete());
+
+        List<CaptureSession> loaded = CaptureSession.loadAllSessions(storage.getCapturesDir());
+        assertEquals(1, loaded.size());
+        CaptureSession session = loaded.get(0);
+        assertTrue("Session with deleted frame must report missing frames", session.hasMissingFrames());
+        assertFalse("Session with deleted frame must not be complete", session.isComplete());
     }
 }

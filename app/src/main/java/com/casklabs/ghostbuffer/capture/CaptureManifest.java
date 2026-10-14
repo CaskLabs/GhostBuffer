@@ -50,6 +50,7 @@ public class CaptureManifest {
     private int version = 1;
     private String appVersion = "1.0.0";
     private String cameraModel = "ILCE-5000";
+    private String cameraFirmware = "1.00";
     private String sessionId;
     private String createdAt;
     private long triggerTimeMs;
@@ -71,6 +72,9 @@ public class CaptureManifest {
 
     public String getCameraModel() { return cameraModel; }
     public void setCameraModel(String cameraModel) { this.cameraModel = cameraModel; }
+
+    public String getCameraFirmware() { return cameraFirmware; }
+    public void setCameraFirmware(String cameraFirmware) { this.cameraFirmware = cameraFirmware; }
 
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
@@ -109,6 +113,7 @@ public class CaptureManifest {
         root.put("version", version);
         root.put("app_version", appVersion);
         root.put("camera_model", cameraModel);
+        root.put("camera_firmware", cameraFirmware);
         root.put("session_id", sessionId);
         root.put("created_at", createdAt);
         root.put("trigger_time_ms", triggerTimeMs);
@@ -135,6 +140,7 @@ public class CaptureManifest {
         manifest.setVersion(root.getInt("version"));
         manifest.setAppVersion(root.optString("app_version", "1.0.0"));
         manifest.setCameraModel(root.optString("camera_model", "Unknown"));
+        manifest.setCameraFirmware(root.optString("camera_firmware", ""));
         manifest.setSessionId(root.getString("session_id"));
         manifest.setCreatedAt(root.optString("created_at", ""));
         manifest.setTriggerTimeMs(root.getLong("trigger_time_ms"));

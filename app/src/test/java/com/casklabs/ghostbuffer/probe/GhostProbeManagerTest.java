@@ -60,6 +60,7 @@ public class GhostProbeManagerTest {
         assertTrue("Probe JPEG file must exist", result.jpegFile.exists());
         assertTrue("Probe JPEG must not be empty", result.jpegFile.length() > 0);
         assertTrue("Probe report file must exist", result.reportFile.exists());
+        assertTrue("Probe must report decoded image dimensions", result.imageWidth > 0 && result.imageHeight > 0);
 
         // Verify report content
         BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(result.reportFile), "UTF-8"));
@@ -82,5 +83,15 @@ public class GhostProbeManagerTest {
         GhostProbeManager.ProbeResult result = probeManager.runSingleProbe(backend, "ILCE-5000", "1.0.0");
 
         assertFalse("Probe must report failure when backend gives null frame", result.success);
+    }
+
+    @Test
+    public void testRunSingleProbeFailureOnCorruptBytes() {
+        backend.setSimulateCorruptedBytes(true);
+        GhostProbeManager.ProbeResult result = probeManager.runSingleProbe(backend, "ILCE-5000", "1.0.0");
+
+        assertFalse("Probe must fail when JPEG is not decodable", result.success);
+        assertTrue("Error message must mention decodability validation",
+            result.message.contains("decoding validation"));
     }
 }

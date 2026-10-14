@@ -21,8 +21,8 @@ public class FrameReaderTest {
     public void setUp() throws Exception {
         backend = new FakePreviewBackend();
         backend.open(null);
-        backend.startPreviewSequence(640, 480, 20); // 20 FPS (50ms interval)
-        ringBuffer = new FrameRingBuffer(2000L, 30, 1024 * 1024L);
+        backend.startPreviewSequence(640, 480, 20);
+        ringBuffer = new FrameRingBuffer(2000L, 30, 3 * 1024 * 1024L);
     }
 
     @After
@@ -47,6 +47,9 @@ public class FrameReaderTest {
 
             @Override
             public void onReaderError(Throwable error) {}
+
+            @Override
+            public void onReaderStale() {}
         });
 
         reader.start();
@@ -74,6 +77,9 @@ public class FrameReaderTest {
             public void onReaderError(Throwable error) {
                 errorLatch.countDown();
             }
+
+            @Override
+            public void onReaderStale() {}
         });
 
         reader.start();

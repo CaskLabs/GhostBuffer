@@ -2,6 +2,7 @@ package com.casklabs.ghostbuffer.capture;
 
 import com.casklabs.ghostbuffer.buffer.FrameRingBuffer;
 import com.casklabs.ghostbuffer.preview.FakePreviewBackend;
+import com.casklabs.ghostbuffer.probe.GhostProbeManager;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
 import org.junit.After;
 import org.junit.Before;
@@ -126,5 +127,66 @@ public class CaptureControllerTest {
         controller.resumeBuffering();
         assertEquals(CaptureController.State.BUFFERING, controller.getState());
         assertEquals("Buffer should be reset on resume", 0, ringBuffer.size());
+    }
+
+    @Test
+    public void testLateSaveWhilePausedKeepsControllerPaused() throws Exception {
+        controller = new CaptureController(backend, ringBuffer, storage, null);
+        controller.start(null);
+
+        Thread.sleep(200);
+        assertTrue("Must have buffered frames", ringBuffer.size() > 0);
+
+        // Trigger capture
+        assertTrue(controller.onShutterKeyDown());
+        assertEquals(CaptureController.State.SAVING, controller.getState());
+
+        // User navigates away to gallery while saving is in flight
+        controller.pause();
+
+        // Wait for background save to finish
+        Thread.sleep(600);
+
+        // Controller must be PAUSED, not REVIEW or BUFFERING!
+        assertEquals("Late save completion while paused must leave state as PAUSED",
+            CaptureController.State.PAUSED, controller.getState());
+
+        // Any delayed resumeBuffering() call must be ignored while paused
+        controller.resumeBuffering();
+        assertEquals("resumeBuffering() while paused must NOT transition to BUFFERING",
+            CaptureController.State.PAUSED, controller.getState());
+    }
+
+    @Test
+    public void testDiscardSnapshotAndResume() throws Exception {
+        controller = new CaptureController(backend, ringBuffer, storage, null);
+        controller.start(null);
+
+        Thread.sleep(200);
+        controller.onShutterKeyDown();
+        assertEquals(CaptureController.State.SAVING, controller.getState());
+
+        // Discard snapshot and resume
+        controller.discardSnapshotAndResume();
+        assertEquals(CaptureController.State.BUFFERING, controller.getState());
+        assertNull(controller.getLastFrozenSnapshot());
+    }
+
+    @Test
+    public void testSerializedProbeExecution() throws Exception {
+        controller = new CaptureController(backend, ringBuffer, storage, null);
+        controller.start(null);
+
+        Thread.sleep(200);
+        assertTrue("Buffering before probe", ringBuffer.size() > 0);
+
+        GhostProbeManager probeManager = new GhostProbeManager(storage);
+        GhostProbeManager.ProbeResult result = controller.runProbe(probeManager);
+
+        assertTrue("Probe executed through controller must succeed", result.success);
+        assertNotNull("Probe JPEG file must exist", result.jpegFile);
+        assertTrue(result.jpegFile.exists());
+        assertTrue("Probe must validate decodability", result.imageWidth > 0);
+        assertEquals(CaptureController.State.BUFFERING, controller.getState());
     }
 }
