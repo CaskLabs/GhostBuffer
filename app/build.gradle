@@ -5,7 +5,7 @@ android {
     buildToolsVersion "25.0.2"
 
     defaultConfig {
-        applicationId "com.github.ma1co.pmcademo.app"
+        applicationId "com.casklabs.ghostbuffer"
         minSdkVersion 10
         targetSdkVersion 10
         versionCode "git -C ${projectDir} rev-list --first-parent --count HEAD".execute().text.trim().toInteger()
@@ -16,11 +16,15 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_6
         targetCompatibility JavaVersion.VERSION_1_6
     }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 android.applicationVariants.all { variant ->
     variant.outputs.each { output ->
-        def apkName = "PMCADemo-${output.baseName}-${variant.versionName}.apk"
+        def apkName = "GhostBuffer-${output.baseName}-${variant.versionName}.apk"
         output.outputFile = new File(output.outputFile.parent, apkName)
     }
 }
@@ -29,4 +33,6 @@ dependencies {
     compile 'com.github.ma1co.OpenMemories-Framework:framework:-SNAPSHOT'
     provided 'com.github.ma1co.OpenMemories-Framework:stubs:-SNAPSHOT'
     compile 'com.nanohttpd:nanohttpd:2.1.1'
+    testCompile 'junit:junit:4.12'
+    testCompile 'org.json:json:20231013'
 }
