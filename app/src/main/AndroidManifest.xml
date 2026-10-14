@@ -8,7 +8,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
-    <application android:label="@string/app_name" >
+    <application
+        android:label="@string/app_name"
+        android:icon="@android:drawable/ic_menu_camera">
+
         <receiver android:name=".ExitCompletedReceiver" >
             <intent-filter>
                 <action android:name="com.android.server.DAConnectionManagerService.ExitCompleted" />
@@ -22,13 +25,30 @@
             </intent-filter>
         </receiver>
 
+        <!-- GhostBuffer Main Activity -->
         <activity
-            android:name=".MainActivity"
-            android:label="@string/title_activity_main" >
+            android:name="com.casklabs.ghostbuffer.ui.GhostBufferActivity"
+            android:label="@string/title_activity_ghost_buffer"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- GhostBuffer Gallery -->
+        <activity
+            android:name="com.casklabs.ghostbuffer.ui.GhostGalleryActivity"
+            android:label="@string/title_activity_ghost_gallery"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|keyboardHidden">
+        </activity>
+
+        <!-- PMCADemo Diagnostics Suite Activities preserved -->
+        <activity
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main" >
         </activity>
         <activity
             android:name=".KeyEventActivity"

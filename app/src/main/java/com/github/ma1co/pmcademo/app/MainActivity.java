@@ -6,6 +6,8 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ListView;
+import com.casklabs.ghostbuffer.ui.GhostBufferActivity;
+import com.casklabs.ghostbuffer.ui.GhostGalleryActivity;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -31,6 +33,8 @@ public class MainActivity extends BaseActivity implements AdapterView.OnItemClic
     }
 
     protected ActivityListItem activities[] = {
+        new ActivityListItem(R.string.title_activity_ghost_buffer, GhostBufferActivity.class),
+        new ActivityListItem(R.string.title_activity_ghost_gallery, GhostGalleryActivity.class),
         new ActivityListItem(R.string.title_activity_camera, CameraActivity.class),
         new ActivityListItem(R.string.title_activity_key_event, KeyEventActivity.class),
         new ActivityListItem(R.string.title_activity_property, PropertyActivity.class),
