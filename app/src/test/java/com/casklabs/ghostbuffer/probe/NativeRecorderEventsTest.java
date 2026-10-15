@@ -38,4 +38,23 @@ public class NativeRecorderEventsTest {
         events.onStopped(100); events.startRequested(200);
         assertFalse(events.stopped()); assertFalse(events.unexpectedStop());
     }
+    @Test public void liveReadWaitsForStartCallbackAndSettlingTime() {
+        NativeRecorderEvents events = new NativeRecorderEvents(); events.registered = true;
+        events.startRequested(100);
+        assertFalse(events.readyForLiveRead(1000, 500));
+        events.onStarted(true, 465);
+        assertFalse(events.readyForLiveRead(964, 500));
+        assertTrue(events.readyForLiveRead(965, 500));
+    }
+    @Test public void unavailableListenerNeverAllowsUngatedLiveReads() {
+        NativeRecorderEvents events = new NativeRecorderEvents(); events.startRequested(0); events.onStarted(true, 1);
+        assertFalse(events.readyForLiveRead(1000, 500));
+    }
+    @Test public void stopRequestOrNativeStopClosesLiveReadGate() {
+        NativeRecorderEvents events = new NativeRecorderEvents(); events.registered = true;
+        events.startRequested(0); events.onStarted(true, 100); events.stopRequested(1000);
+        assertFalse(events.readyForLiveRead(1500, 500));
+        events.startRequested(2000); events.onStarted(true, 2100); events.onStopped(2200);
+        assertFalse(events.readyForLiveRead(3000, 500));
+    }
 }

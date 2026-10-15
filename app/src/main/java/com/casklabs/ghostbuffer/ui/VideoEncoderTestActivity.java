@@ -6,16 +6,20 @@ import android.os.HandlerThread;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.KeyEvent;
+import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.FrameLayout;
 import com.casklabs.ghostbuffer.probe.SonyVideoEncoderBackend;
 import com.casklabs.ghostbuffer.probe.VideoEncoderProbe;
 import com.casklabs.ghostbuffer.storage.GhostStorage;
+import com.casklabs.ghostbuffer.time.GhostTime;
 import com.github.ma1co.pmcademo.app.BaseActivity;
 import com.github.ma1co.pmcademo.app.BuildConfig;
 import com.github.ma1co.pmcademo.app.Logger;
 import com.github.ma1co.pmcademo.app.R;
+import com.sony.scalar.sysutil.ScalarInput;
 import java.io.BufferedReader;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
@@ -26,7 +30,8 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     private volatile boolean foreground, hasSurface, busy;
     private volatile int generation;
     private volatile String lastLifecycleEvent;
-    private boolean attempted, runPending;
+    private volatile long lastLifecycleAt;
+    private boolean runPending;
     private boolean liveMode;
     private Handler ui, worker;
     private HandlerThread workerThread;
@@ -35,6 +40,8 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     private SonyVideoEncoderBackend backend;
     private TextView status, details;
     private ScrollView scroll;
+    private Button[] actions;
+    private int selectedAction;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -43,8 +50,10 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
         status = (TextView) findViewById(R.id.encoder_test_status);
         details = (TextView) findViewById(R.id.encoder_test_details);
         scroll = (ScrollView) findViewById(R.id.encoder_test_scroll);
+        actions = new Button[] { (Button) findViewById(R.id.encoder_test_run),
+            (Button) findViewById(R.id.encoder_test_live), (Button) findViewById(R.id.encoder_test_back) };
         previewContainer = (FrameLayout) findViewById(R.id.encoder_test_preview_container);
-        workerThread = new HandlerThread("GhostBuffer-EncoderTest");
+        workerThread = new HandlerThread("GhostBuffer-EncoderCoordinator");
         workerThread.start();
         worker = new Handler(workerThread.getLooper());
         findViewById(R.id.encoder_test_run).setOnClickListener(new View.OnClickListener() {
@@ -56,17 +65,28 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
         findViewById(R.id.encoder_test_back).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { finish(); }
         });
+        View.OnFocusChangeListener actionFocus = new View.OnFocusChangeListener() {
+            @Override public void onFocusChange(View view, boolean focused) {
+                if (!focused) return;
+                for (int i = 0; i < actions.length; i++) if (actions[i] == view) selectedAction = i;
+                for (int i = 0; i < actions.length; i++) actions[i].setSelected(i == selectedAction);
+            }
+        };
+        for (Button action : actions) action.setOnFocusChangeListener(actionFocus);
+        selectAction(0);
     }
 
     @Override protected void onResume() {
         super.onResume();
         lastLifecycleEvent = "onResume";
+        lastLifecycleAt = GhostTime.uptimeMillis();
         setColorDepth(false);
         foreground = true;
-        if (!attempted) runTest(false);
+        updateActionButtons();
     }
 
     private void cancelAndRelease() {
+        boolean wasBusy = busy;
         generation++;
         runPending = false;
         worker.removeCallbacksAndMessages(null);
@@ -77,10 +97,13 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
             }
         }
         busy = false;
+        updateActionButtons();
+        if (wasBusy) status.setText(R.string.encoder_test_interrupted);
     }
 
     @Override protected void onPause() {
         lastLifecycleEvent = "onPause";
+        lastLifecycleAt = GhostTime.uptimeMillis();
         foreground = false;
         cancelAndRelease(); // Native resources must close before BaseActivity releases the display.
         super.onPause();
@@ -100,13 +123,15 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     @Override public void surfaceDestroyed(SurfaceHolder holder) {
         if (holder != surface) return;
         lastLifecycleEvent = "surfaceDestroyed";
+        lastLifecycleAt = GhostTime.uptimeMillis();
         hasSurface = false; cancelAndRelease();
     }
 
     private void runTest(boolean live) {
         if (!foreground || busy) return;
         liveMode = live;
-        busy = true; attempted = true;
+        busy = true;
+        updateActionButtons();
         runPending = true;
         status.setText("Preparing fresh preview surface...");
         // Camera.release() alone does not recreate the SurfaceView's native buffer queue.
@@ -126,17 +151,18 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
         final boolean live = liveMode;
         status.setText(live ? "Testing Full-HD live access..." : "Testing 6-second baseline...");
         details.setText("Checking recorder APIs and reported Full-HD profiles.\n\n"
-            + (live ? "6-second recording with reads of its growing SD file into RAM.\nSD-to-RAM access, not direct encoder memory.\n"
-                : "6-second recording without live file reads.\nAfter completion, press RIGHT for the live-read comparison.\n")
+            + (live ? "Waits for recorder start, then probes predicted movie files.\nSD-to-RAM access; no live directory scans.\n"
+                : "6-second recording without live file reads.\nAfter completion, select Live-Test for the comparison.\n")
             + "Both modes log recorder state; stream-write listener disabled.\n"
-            + "Report: GHOSTBUF/PROBE\n\nCENTER Baseline  RIGHT Live  MENU Back");
+            + "Report: GHOSTBUF/PROBE\n\nAbbrechen / MENU returns and cancels.");
         final int request = ++generation;
         final String device = deviceDetails();
         final VideoEncoderProbe.Cancellation cancel = new VideoEncoderProbe.DiagnosticCancellation() {
             @Override public boolean isCancelled() { return !foreground || !hasSurface || request != generation; }
             @Override public String describeState() {
                 return "foreground=" + foreground + ", surface=" + hasSurface + ", generation=" + generation
-                    + ", request=" + request + ", lastLifecycleEvent=" + lastLifecycleEvent;
+                    + ", request=" + request + ", lastLifecycleEvent=" + lastLifecycleEvent
+                    + ", lifecycleUptimeMs=" + lastLifecycleAt;
             }
         };
         worker.post(new Runnable() {
@@ -145,7 +171,7 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
                 final String report;
                 synchronized (cameraGuard) {
                     if (cancel.isCancelled()) return;
-                    backend = new SonyVideoEncoderBackend(surface, cancel, ui);
+                    backend = new SonyVideoEncoderBackend(surface, cancel);
                     result = new VideoEncoderProbe(new GhostStorage(), 6000L, live).run(backend, cancel, device);
                     backend = null; // The probe closes its resources even after a failed native call.
                     report = readReport(result);
@@ -154,6 +180,8 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
                     @Override public void run() {
                         if (cancel.isCancelled()) return;
                         busy = false;
+                        updateActionButtons();
+                        selectAction(live ? 1 : 0);
                         status.setText(result.status);
                         details.setText(result.message + "\n\n" + (result.reportFile == null ? "No report saved."
                             : "Report: " + result.reportFile.getAbsolutePath()) + "\n\n" + report);
@@ -162,6 +190,54 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
                 });
             }
         });
+    }
+
+    private void updateActionButtons() {
+        if (actions == null) return;
+        actions[0].setEnabled(foreground && !busy);
+        actions[1].setEnabled(foreground && !busy);
+        actions[2].setText(busy ? R.string.encoder_test_cancel : R.string.encoder_test_back);
+        if (!actions[selectedAction].isEnabled()) selectAction(2);
+    }
+
+    private void selectAction(int index) {
+        selectedAction = index;
+        for (int i = 0; i < actions.length; i++) actions[i].setSelected(i == index);
+        actions[index].requestFocus();
+    }
+
+    private void moveAction(int direction) {
+        for (int offset = 1; offset <= actions.length; offset++) {
+            int index = (selectedAction + direction * offset + actions.length) % actions.length;
+            if (actions[index].isEnabled()) { selectAction(index); return; }
+        }
+    }
+
+    private void activateAction() {
+        if (actions[selectedAction].isEnabled()) actions[selectedAction].performClick();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (actions == null) return super.dispatchKeyEvent(event);
+        int scan = event.getScanCode(), key = event.getKeyCode();
+        boolean left = scan == ScalarInput.ISV_KEY_LEFT || key == KeyEvent.KEYCODE_DPAD_LEFT;
+        boolean right = scan == ScalarInput.ISV_KEY_RIGHT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+        boolean center = scan == ScalarInput.ISV_KEY_ENTER || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER;
+        boolean up = scan == ScalarInput.ISV_KEY_UP || key == KeyEvent.KEYCODE_DPAD_UP;
+        boolean down = scan == ScalarInput.ISV_KEY_DOWN || key == KeyEvent.KEYCODE_DPAD_DOWN;
+        if (!(left || right || center || up || down)) return super.dispatchKeyEvent(event);
+        // Handle navigation once, before Button's default key dispatch can move focus or click too.
+        if (event.getAction() == KeyEvent.ACTION_DOWN && center) actions[selectedAction].setPressed(true);
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            for (Button action : actions) action.setPressed(false);
+            if (!event.isCanceled()) {
+                if (left) moveAction(-1);
+                else if (right) moveAction(1);
+                else if (center) activateAction();
+                else scroll.smoothScrollBy(0, up ? -80 : 80);
+            }
+        }
+        return true;
     }
 
     private String deviceDetails() {
@@ -185,11 +261,11 @@ public final class VideoEncoderTestActivity extends BaseActivity implements Surf
     }
 
     @Override protected boolean onEnterKeyDown() { return true; }
-    @Override protected boolean onEnterKeyUp() { runTest(false); return true; }
+    @Override protected boolean onEnterKeyUp() { activateAction(); return true; }
     @Override protected boolean onRightKeyDown() { return true; }
-    @Override protected boolean onRightKeyUp() { runTest(true); return true; }
+    @Override protected boolean onRightKeyUp() { moveAction(1); return true; }
     @Override protected boolean onLeftKeyDown() { return true; }
-    @Override protected boolean onLeftKeyUp() { runTest(false); return true; }
+    @Override protected boolean onLeftKeyUp() { moveAction(-1); return true; }
     @Override protected boolean onMenuKeyDown() { return true; }
     @Override protected boolean onMenuKeyUp() { finish(); return true; }
     @Override protected boolean onDeleteKeyDown() { return true; }

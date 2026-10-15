@@ -13,6 +13,9 @@ import java.util.Set;
 
 /** A staged native recording test. Profile acceptance is never reported as verified image data. */
 public final class VideoEncoderProbe {
+    private static final class StartUnconfirmedException extends java.io.IOException {
+        StartUnconfirmedException() { super("Native onStarted callback missing after 2000 ms; recording state unconfirmed"); }
+    }
     public interface Cancellation { boolean isCancelled(); }
     public interface DiagnosticCancellation extends Cancellation { String describeState(); }
     public interface Backend {
@@ -64,15 +67,21 @@ public final class VideoEncoderProbe {
         public int videoWidth, videoHeight;
         public LiveVideoAccessProbe.Result liveAccess;
         public boolean liveObservationValid;
+        public boolean liveAccessAttempted;
     }
 
     private final GhostStorage storage;
     private final long durationMs;
     private final boolean testLiveAccess;
+    private final long liveSettleMs;
     public VideoEncoderProbe(GhostStorage storage) { this(storage, 2000L, false); }
     public VideoEncoderProbe(GhostStorage storage, long durationMs) { this(storage, durationMs, false); }
     public VideoEncoderProbe(GhostStorage storage, long durationMs, boolean testLiveAccess) {
+        this(storage, durationMs, testLiveAccess, 500);
+    }
+    VideoEncoderProbe(GhostStorage storage, long durationMs, boolean testLiveAccess, long liveSettleMs) {
         this.storage = storage; this.durationMs = durationMs; this.testLiveAccess = testLiveAccess;
+        this.liveSettleMs = liveSettleMs;
     }
 
     public Result run(Backend backend, Cancellation cancellation, String deviceDetails) {
@@ -86,6 +95,7 @@ public final class VideoEncoderProbe {
         LiveVideoAccessProbe live = null;
         StreamEvents events = null;
         NativeRecorderEvents recordEvents = null;
+        LiveVideoAccessProbe.Source liveSource = null;
         String stage = "storage";
         try {
             File directory = storage.prepareProbeDir();
@@ -100,8 +110,9 @@ public final class VideoEncoderProbe {
             output = new FileOutputStream(result.reportFile);
             report = new OutputStreamWriter(output, "UTF-8");
             line(report, "GhostBuffer internal video encoder test");
-            line(report, "Probe revision: 5 (isolated baseline/live tests and native recorder state timeline)");
+            line(report, "Probe revision: 7 (one responsive native owner thread; bounded start acknowledgement wait)");
             line(report, "Timestamp: " + GhostStorage.formatIso8601(now));
+            line(report, "Coordinator thread: " + Thread.currentThread().getName());
             line(report, deviceDetails);
             line(report, "Test duration: " + durationMs + " ms; output: SDK default recording media");
             line(report, "Full-HD image data verification: NOT PERFORMED by this recording probe");
@@ -109,6 +120,12 @@ public final class VideoEncoderProbe {
             line(report, "RAM stream capture: NOT TESTED directly; native StreamBuffer availability is checked");
             line(report, "Live SD-to-RAM access test enabled: " + testLiveAccess);
             line(report, "Test mode: " + (testLiveAccess ? "LIVE_SD_READ" : "BASELINE_NO_LIVE_READ"));
+            if (testLiveAccess) {
+                liveSource = LiveVideoAccessProbe.cardSource(cardRoot, before);
+                line(report, "Live access waits for onStarted callback plus " + liveSettleMs + " ms settling time");
+                line(report, "Precomputed AVCHD candidate paths: " + liveSource.movies());
+                line(report, "Live directory enumeration: DISABLED; candidate polls every 250 ms");
+            }
             checkCancelled(cancellation);
             stage = "inspect native recorder and supported profiles";
             line(report, "BEGIN: " + stage);
@@ -157,13 +174,33 @@ public final class VideoEncoderProbe {
                         line(report, "START returned successfully");
                         long startedAt = GhostTime.uptimeMillis();
                         if (testLiveAccess) live = new LiveVideoAccessProbe(
-                            LiveVideoAccessProbe.cardSource(cardRoot), before, cancellation, report);
+                            liveSource, before, cancellation, report, 250);
+                        if (recordEvents.registered) {
+                            stage = "wait for native start acknowledgement";
+                            line(report, "BEGIN: " + stage + "; timeout 2000 ms");
+                            long acknowledgementDeadline = GhostTime.uptimeMillis() + 2000L;
+                            while (!recordEvents.hasStartCallback() && GhostTime.uptimeMillis() < acknowledgementDeadline) {
+                                checkCancelled(cancellation);
+                                backend.checkError();
+                                Thread.sleep(20);
+                            }
+                            checkCancelled(cancellation);
+                            backend.checkError();
+                            if (!recordEvents.hasStartCallback()) throw new StartUnconfirmedException();
+                            line(report, "Native onStarted callback confirmed before recording observation");
+                        }
                         long deadline = startedAt + durationMs;
                         stage = testLiveAccess ? "observe live SD-to-RAM access while recording" : "record video";
                         while (GhostTime.uptimeMillis() < deadline) {
                             checkCancelled(cancellation);
                             backend.checkError();
-                            if (live != null) live.sample(GhostTime.uptimeMillis() - startedAt);
+                            if (live != null && recordEvents.readyForLiveRead(GhostTime.uptimeMillis(), liveSettleMs)) {
+                                if (!result.liveAccessAttempted) {
+                                    line(report, "BEGIN: live access after onStarted and settling period at " + (GhostTime.uptimeMillis() - startedAt) + " ms");
+                                    result.liveAccessAttempted = true;
+                                }
+                                live.sample(GhostTime.uptimeMillis() - startedAt);
+                            }
                             Thread.sleep(20);
                         }
                         checkCancelled(cancellation);
@@ -187,6 +224,7 @@ public final class VideoEncoderProbe {
             result.message = "Test cancelled at " + stage;
             writeQuietly(report, result.message);
         } catch (Throwable e) {
+            if (e instanceof StartUnconfirmedException) result.status = "START_UNCONFIRMED";
             result.message = "Failed at " + stage + ": " + describe(e);
             writeQuietly(report, result.message);
             Throwable cause = e;
@@ -228,14 +266,18 @@ public final class VideoEncoderProbe {
                 writeQuietly(report, "New native clips found in standard Sony movie folders: " + found);
             }
             if (live != null) {
-                result.liveObservationValid = recordingCompletedNormally && !"ERROR".equals(result.status);
+                result.liveObservationValid = result.liveAccessAttempted && recordingCompletedNormally && !"ERROR".equals(result.status);
                 try { live.writeSummary(); }
                 catch (java.io.IOException e) { writeQuietly(report, "Cannot write live-access summary: " + describe(e)); }
                 writeQuietly(report, "Live observation valid: " + result.liveObservationValid);
+                writeQuietly(report, "Live access phase entered: " + result.liveAccessAttempted);
                 writeQuietly(report, "Live access conclusion: " + (result.liveObservationValid
-                    ? result.liveAccess.status : "INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED"));
+                    ? result.liveAccess.status : recordingCompletedNormally || "START_UNCONFIRMED".equals(result.status)
+                        ? "INCONCLUSIVE_START_NOT_CONFIRMED" : "INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED"));
                 result.message += " Live SD access: " + result.liveAccess.status + "; direct encoder RAM access unverified.";
-                if (!result.liveObservationValid) result.message += " Live test inconclusive because recording did not complete normally.";
+                if (!result.liveObservationValid) result.message += recordingCompletedNormally
+                    ? " Live reads skipped because no settled start callback was observed."
+                    : " Live test inconclusive because recording did not complete normally.";
             } else if (testLiveAccess) writeQuietly(report, "Live SD access status: NOT_STARTED");
             if (events != null) {
                 writeQuietly(report, "Stream-write listener registered: " + events.registered);

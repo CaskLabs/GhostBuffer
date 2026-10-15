@@ -3,10 +3,13 @@ package com.casklabs.ghostbuffer.probe;
 import org.junit.Before;
 import org.junit.Test;
 import java.io.IOException;
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.zip.CRC32;
 import static org.junit.Assert.*;
@@ -18,12 +21,14 @@ public class LiveVideoAccessProbeTest {
     private boolean cancelled;
     private LiveVideoAccessProbe probe;
     private static final class FakeSource implements LiveVideoAccessProbe.Source {
-        final Set<String> paths = new HashSet<String>();
+        final Set<String> paths = new LinkedHashSet<String>();
         byte[] data = new byte[0];
         int position, opens, closes, reads, discoveries;
-        boolean failOpen, failRead;
+        boolean failOpen, failRead, missingOpen;
+        String missingPath;
         @Override public Set<String> movies() { discoveries++; return paths; }
         @Override public LiveVideoAccessProbe.ReadHandle open(String path) throws IOException {
+            if (missingOpen || path.equals(missingPath)) throw new FileNotFoundException("Candidate not available");
             if (failOpen) throw new IOException("File temporarily locked");
             opens++;
             return new LiveVideoAccessProbe.ReadHandle() {
@@ -146,5 +151,45 @@ public class LiveVideoAccessProbeTest {
         try { probe.sample(0); fail("Expected cancellation"); } catch (InterruptedException expected) {}
         probe.finish();
         assertEquals(0, source.discoveries); assertEquals(0, source.opens);
+    }
+    @Test public void predictionUsesOnlyExistingAvchdNamesAndHasFourTargets() {
+        File root = new File("/card");
+        Set<String> previous = new HashSet<String>(Arrays.asList(PATH,
+            "/card/PRIVATE/AVCHD/BDMV/STREAM/00014.MTS", "/card/DCIM/99999.MTS",
+            "/card/PRIVATE/AVCHD/BDMV/STREAM/99999.MP4"));
+        Set<String> predicted = LiveVideoAccessProbe.predictedAvchdPaths(root, previous);
+        assertEquals(4, predicted.size());
+        assertTrue(predicted.contains("/card/PRIVATE/AVCHD/BDMV/STREAM/00015.MTS"));
+        assertTrue(predicted.contains("/card/PRIVATE/AVCHD/BDMV/STREAM/00018.MTS"));
+        assertTrue(Collections.disjoint(previous, predicted));
+    }
+    @Test public void predictionWrapsAtFiveDigitsAndExcludesAlreadyExistingClips() {
+        Set<String> previous = new HashSet<String>(Arrays.asList(
+            "/card/PRIVATE/AVCHD/BDMV/STREAM/99999.MTS", "/card/PRIVATE/AVCHD/BDMV/STREAM/00000.MTS"));
+        Set<String> predicted = LiveVideoAccessProbe.predictedAvchdPaths(new File("/card"), previous);
+        assertEquals(3, predicted.size()); assertTrue(Collections.disjoint(previous, predicted));
+        assertTrue(predicted.contains("/card/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS"));
+    }
+    @Test public void cardSourceKeepsPrecomputedCandidatesWithoutRediscoveringMovies() {
+        Set<String> previous = new HashSet<String>(Collections.singleton(PATH));
+        LiveVideoAccessProbe.Source card = LiveVideoAccessProbe.cardSource(new File("/card"), previous);
+        Set<String> candidates = card.movies();
+        previous.add("/card/PRIVATE/AVCHD/BDMV/STREAM/00500.MTS");
+        assertSame(candidates, card.movies());
+        assertTrue(candidates.contains("/card/PRIVATE/AVCHD/BDMV/STREAM/00012.MTS"));
+        try { candidates.clear(); fail("Frozen candidate set expected"); } catch (UnsupportedOperationException expected) {}
+    }
+    @Test public void unavailablePredictedFilesDoNotCountAsVisibleOrSuccessfulReads() throws Exception {
+        source.paths.add(PATH); source.missingOpen = true; probe.sample(0);
+        LiveVideoAccessProbe.Result result = probe.finish();
+        assertEquals("NO_LIVE_FILE", result.status); assertNull(result.path);
+        assertNotNull(result.lastOpenFailure); assertEquals(1, result.openAttempts);
+        assertEquals(0, result.bytesRead);
+    }
+    @Test public void missingFirstCandidateDoesNotPreventOpeningAnotherCandidate() throws Exception {
+        source.paths.add(PATH); source.paths.add(PATH + "X.MTS"); source.missingPath = PATH;
+        source.data = new byte[200]; probe.sample(0);
+        assertEquals("LIVE_SD_BYTES", probe.finish().status);
+        assertEquals(200, source.position);
     }
 }

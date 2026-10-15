@@ -2,21 +2,24 @@ package com.casklabs.ghostbuffer.probe;
 
 import android.view.SurfaceHolder;
 import android.os.Handler;
+import android.os.HandlerThread;
 import com.sony.scalar.hardware.CameraEx;
 import com.casklabs.ghostbuffer.time.GhostTime;
 import java.io.Writer;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.InvocationHandler;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.List;
 
 /** Reflective access keeps newer Sony recorder classes optional on older camera firmware. */
 public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend {
     private final SurfaceHolder surface;
     private final VideoEncoderProbe.Cancellation cancellation;
-    private final Handler ui;
+    private final HandlerThread nativeThread;
+    private final NativeCallRunner nativeCalls;
     private volatile String nativeError;
     private volatile boolean closed;
     private CameraEx camera;
@@ -26,11 +29,26 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
     private boolean parametersChanged;
     private NativeRecorderEvents recordEvents;
 
-    public SonyVideoEncoderBackend(SurfaceHolder surface, VideoEncoderProbe.Cancellation cancellation, Handler ui) {
-        this.surface = surface; this.cancellation = cancellation; this.ui = ui;
+    public SonyVideoEncoderBackend(SurfaceHolder surface, VideoEncoderProbe.Cancellation cancellation) {
+        this.surface = surface; this.cancellation = cancellation;
+        nativeThread = new HandlerThread("GhostBuffer-EncoderNative");
+        nativeThread.start();
+        final Handler owner = new Handler(nativeThread.getLooper());
+        nativeCalls = new NativeCallRunner(new Executor() {
+            @Override public void execute(Runnable operation) {
+                if (!owner.post(operation)) throw new RejectedExecutionException("Native event thread closed");
+            }
+        }, cancellation);
     }
 
-    @Override public VideoEncoderProbe.Capabilities inspect(Writer report) throws Exception {
+    @Override public VideoEncoderProbe.Capabilities inspect(final Writer report) throws Exception {
+        return nativeCalls.call(new Callable<VideoEncoderProbe.Capabilities>() {
+            @Override public VideoEncoderProbe.Capabilities call() throws Exception { return inspectOnNative(report); }
+        }, true);
+    }
+
+    private VideoEncoderProbe.Capabilities inspectOnNative(Writer report) throws Exception {
+        note(report, "Native camera/recorder owner thread: " + Thread.currentThread().getName());
         VideoEncoderProbe.Capabilities caps = new VideoEncoderProbe.Capabilities();
         Class<?> recorderType;
         try { recorderType = Class.forName("com.sony.scalar.media.MediaRecorder"); }
@@ -49,7 +67,7 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
         } catch (Exception e) { note(report, "StreamBuffer: " + VideoEncoderProbe.describe(e)); }
         catch (LinkageError e) { note(report, "StreamBuffer: " + VideoEncoderProbe.describe(e)); }
         checkCancelled();
-        recorder = createRecorderOnUi(recorderType);
+        recorder = recorderType.newInstance();
         note(report, "Recorder constructor returned successfully");
         final Class<?> errorListener = Class.forName("com.sony.scalar.media.MediaRecorder$OnErrorListener");
         Object callback = Proxy.newProxyInstance(errorListener.getClassLoader(), new Class<?>[] { errorListener }, new InvocationHandler() {
@@ -123,7 +141,13 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
         catch (LinkageError e) { note(report, "Record-state listener unavailable: " + VideoEncoderProbe.describe(e)); }
     }
 
-    @Override public VideoEncoderProbe.Profile configure(VideoEncoderProbe.Profile profile) throws Exception {
+    @Override public VideoEncoderProbe.Profile configure(final VideoEncoderProbe.Profile profile) throws Exception {
+        return nativeCalls.call(new Callable<VideoEncoderProbe.Profile>() {
+            @Override public VideoEncoderProbe.Profile call() throws Exception { return configureOnNative(profile); }
+        }, true);
+    }
+
+    private VideoEncoderProbe.Profile configureOnNative(VideoEncoderProbe.Profile profile) throws Exception {
         checkCancelled();
         Object parameters = call("getParameters");
         String[] setters = { "setOutputFormat", "setVideoSize", "setVideoFrameRate", "setVideoEncodingBitRate", "setVideoAspectRatio" };
@@ -137,16 +161,30 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
             (String) invoke(active, "getVideoAspectRatio"));
     }
 
-    @Override public void prepare() throws Exception { checkCancelled(); call("prepare"); }
+    @Override public void prepare() throws Exception {
+        nativeCalls.call(new Callable<Void>() {
+            @Override public Void call() throws Exception { checkCancelled(); SonyVideoEncoderBackend.this.call("prepare"); return null; }
+        }, true);
+    }
     @Override public void start() throws Exception {
-        checkCancelled();
-        if (recordEvents != null) recordEvents.startRequested(GhostTime.uptimeMillis());
-        call("start");
+        nativeCalls.call(new Callable<Void>() {
+            @Override public Void call() throws Exception {
+                checkCancelled();
+                if (recordEvents != null) recordEvents.startRequested(GhostTime.uptimeMillis());
+                SonyVideoEncoderBackend.this.call("start"); return null;
+            }
+        }, true);
     }
     @Override public void stop() throws Exception {
-        if (recorder == null || (recordEvents != null && recordEvents.stopped())) return;
-        if (recordEvents != null) recordEvents.stopRequested(GhostTime.uptimeMillis());
-        call("stop");
+        nativeCalls.call(new Callable<Void>() {
+            @Override public Void call() throws Exception {
+                if (recorder != null && (recordEvents == null || !recordEvents.stopped())) {
+                    if (recordEvents != null) recordEvents.stopRequested(GhostTime.uptimeMillis());
+                    SonyVideoEncoderBackend.this.call("stop");
+                }
+                return null;
+            }
+        }, false);
     }
     @Override public void checkError() throws Exception {
         if (nativeError != null) throw new java.io.IOException(nativeError);
@@ -155,7 +193,16 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
     }
 
     @Override public void close() throws Exception {
+        if (closed) return;
         closed = true;
+        try {
+            nativeCalls.call(new Callable<Void>() {
+                @Override public Void call() throws Exception { closeOnNative(); return null; }
+            }, false);
+        } finally { nativeThread.quit(); }
+    }
+
+    private void closeOnNative() throws Exception {
         Exception failure = null;
         if (recorder != null) {
             try {
@@ -173,28 +220,6 @@ public final class SonyVideoEncoderBackend implements VideoEncoderProbe.Backend 
             camera = null; previewAttempted = false;
         }
         if (failure != null) throw failure;
-    }
-
-    private Object createRecorderOnUi(final Class<?> type) throws Exception {
-        // Native recorder notifications must have a looper that remains responsive during the timed test.
-        final Object[] value = { null };
-        final Throwable[] failure = { null };
-        final CountDownLatch created = new CountDownLatch(1);
-        ui.post(new Runnable() {
-            @Override public void run() {
-                try {
-                    if (closed || cancellation.isCancelled()) throw new InterruptedException("Test closed");
-                    value[0] = type.newInstance();
-                    if (closed || cancellation.isCancelled()) {
-                        try { SonyVideoEncoderBackend.invoke(value[0], "release"); } finally { value[0] = null; }
-                    }
-                } catch (Throwable e) { failure[0] = e; }
-                finally { created.countDown(); }
-            }
-        });
-        while (!created.await(20, TimeUnit.MILLISECONDS)) checkCancelled();
-        if (failure[0] != null) throw new Exception(VideoEncoderProbe.describe(failure[0]), failure[0]);
-        return value[0];
     }
 
     private void checkCancelled() throws InterruptedException {

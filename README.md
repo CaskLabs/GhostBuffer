@@ -2,7 +2,11 @@
 
 **GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible cameras. It has been tested on the **Sony α5000 (ILCE-5000)**; other models have not yet been tested with GhostBuffer.
 
-> **Status (October 2026):** All 10 architectural and lifecycle remediations from the V1 review have been fully implemented and verified with 134 automated unit tests. The build produces a clean, runnable APK targeting Android 2.3.3 (Gingerbread API 10). See [V1 Review & Remediations](#v1-review--remediations) for detailed resolution of each finding.
+> **Development status — October 15, 2026:** The JPEG pre-trigger buffer is implemented. Native video tests have confirmed **1920×1080 in saved H.264 headers**, but a Full-HD video pre-trigger buffer has **not** been demonstrated. Recorder lifecycle stability remains under investigation. The latest completed software checks passed **151 unit tests**, Android lint with no errors, and APK signature verification; these checks do not establish reliability on the camera.
+
+This README describes the current development source. The published
+[v1.1 release](https://github.com/CaskLabs/GhostBuffer/releases/tag/v1.1) predates
+configurable preview resolution and the video encoder/live-access tests.
 
 ---
 
@@ -10,18 +14,31 @@
 
 Traditional cameras only begin recording after the shutter is pressed, often missing spontaneous, high-speed, or unpredictable moments (e.g., lightning strikes, wildlife actions, sports milestones).
 
-GhostBuffer solves this by maintaining a continuous rolling ring buffer in memory. The application polls the live preview stream at up to 10 FPS, retaining up to **2000 ms (2 seconds)** in RAM. Higher-resolution settings use lower polling rates to reduce memory and processing pressure. When you press the physical shutter button, the pre-trigger buffer is instantly frozen and persisted to your SD card.
+GhostBuffer maintains a rolling buffer of JPEG preview frames in memory. It polls
+at up to 10 FPS and retains up to **2000 ms (2 seconds)**, subject to the memory
+budget. Pressing the shutter freezes the buffered frames for background saving
+to the SD card. Higher requested resolutions use lower polling targets.
+
+| Capture path | Current evidence on the α5000 |
+|---|---|
+| JPEG preview buffer | 640×480 delivered; requesting 1920×1080 fell back to 640×480 |
+| Native video recording to SD | Saved AVCHD clips declare 1920×1080 in H.264 SPS headers; revision 7 repeatability still needs camera testing |
+| Direct encoder stream into RAM | The known `StreamBuffer` API is absent on tested firmware 1.00 / Scalar API 3 |
+| Growing SD movie read into RAM | Experimental; no successful live video read has been demonstrated |
+
+Selecting 1920×1080 in settings does not enable a Full-HD pre-trigger buffer on
+this camera. The JPEG preview and native video encoder are separate data paths.
 
 ---
 
 ## Features
 
 - **Rolling Pre-Trigger Ring Buffer:**
-  - Continuously retains up to 2 seconds of high-speed preview frames in RAM.
+  - Retains up to 2 seconds of JPEG preview frames in RAM.
   - Strict byte-budget enforcement: rejects oversized incoming frames without corrupting the buffer, with a 3–8 MiB JPEG payload budget based on the app's maximum heap size and a 25-frame limit. The budget reserves space for the separate frozen snapshot and the UI; it can shorten the effective buffer duration for large JPEGs.
   - Time-window head eviction ensures oldest frames roll over seamlessly.
 
-- **Zero Shutter Lag & Latching:**
+- **Pre-Trigger Capture:**
   - Direct hardware shutter hook (`ISV_KEY_S2`).
   - Hardware repeat suppression prevents accidental multi-triggers when holding down the button.
   - Thread-safe snapshot freezing (`freezeSnapshot()`) decouples capture from background disk I/O.
@@ -52,7 +69,12 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Validates real decodable baseline JPEGs and writes diagnostic reports and sample JPEGs to `<SD Card>/GHOSTBUF/PROBE/`.
 
 - **Camera Menu:**
-  - Pressing **Menu** opens a compact Camera / Gallery / Exposure menu. Legacy demo tools are hidden.
+  - Pressing **Menu** opens a compact Camera / Gallery / Settings menu. Legacy demo tools are hidden.
+
+- **Experimental Video Diagnostics:**
+  - Clickable control and live-access tests, with hardware-key navigation.
+  - Six-second native recording attempts, saved-clip H.264 header inspection and stage-by-stage reports.
+  - Revision 7 separates native camera/recorder operations from timed waits and file reads; hardware verification is pending.
 
 ---
 
@@ -85,6 +107,7 @@ Play or Delete** closes the panel. Touch controls provide the same actions.
 | ISO | Values reported by the camera, including Auto when supported | Auto ISO |
 | Exposure compensation | Camera-reported range and EV step | Neutral 0 EV |
 | White balance | Camera-reported presets | Auto white balance |
+| Video encoder test | Open the diagnostic test screen | Open the test screen |
 
 Camera settings are inherited when opening the controls; opening the panel does
 not force manual exposure. Lenses without electronic aperture control show
@@ -106,8 +129,9 @@ or the −/+ buttons. The choice is remembered between app starts. Center restor
 1920×1080; actual rates depend on the camera.
 
 The **Active** line shows the dimensions read from a real JPEG, not just the
-requested setting. Larger sizes are experimental and have not yet been verified
-on the α5000. The Sony live-preview API exposes size options, but its
+requested setting. On the tested α5000, requesting 1920×1080 still produced
+640×480 JPEGs and activated the fallback. Higher-resolution JPEG delivery has
+not been demonstrated. The Sony live-preview API exposes size options, but its
 [available documentation](https://github.com/ma1co/OpenMemories-Framework/issues/35)
 only reports a tested 640×480 configuration on the α6000.
 
@@ -122,145 +146,120 @@ actual JPEG dimensions and measured frame rate. Native JPEG read limits increase
 from 256 KiB at VGA to 1 MiB at 720p and 2 MiB at 1080p; the overall RAM budget
 still applies. The app saves the delivered JPEG bytes without resizing them.
 
-### Internal Video Encoder Test
+### Internal Video Encoder and Live-Access Tests (Experimental)
 
-Open **Fn → Settings → Video encoder test** and press **Center** (or tap the row).
-Revision 5 starts a six-second **Baseline** recording without live file reads.
-After it finishes, press **Right** (or tap **RIGHT Live**) for a separate
-six-second recording with live SD reads. **Center/Left** repeats Baseline.
-Each run saves its own report; compare `BASELINE_NO_LIVE_READ` with `LIVE_SD_READ`.
-The test uses its own screen and camera connection after the JPEG preview has
-paused. It checks the Sony recorder class, StreamBuffer API, Scalar API version,
-current settings and firmware-reported recording profiles. The test uses a
-reported **FHD_1080** profile or an **AVCHD HD_1080** profile with FX/FH quality,
-16:9 aspect and 24p/25p/50i/60i rate. Scalar API 3 on the tested α5000 uses the
-same **HD_1080** size name for AVCHD and MPEG4. Sony documents these AVCHD
-profiles as **1920×1080**, whereas MPEG4 HD_1080 HQ corresponds to **1440×1080**
-and is excluded. See Sony's
-[ILCE-5000 movie recording settings](https://helpguide.sony.net/gbmig/44879441/v1/en/contents/TP0000301880.html).
-Progressive 24p/25p profiles are preferred when available. Revision 3 gives each
-test a fresh preview surface, stops even a partially started preview and detaches
-the display target before releasing the camera. This addresses reuse of the
-previous preview target. Both supplied revision 3 reports successfully started
-the preview; broader reliability testing is still pending.
+These tests investigate a possible Full-HD video data path. They do not change
+the normal JPEG buffer into a video buffer.
 
-On the tested α5000 (firmware 1.00, Scalar API 3), revision 2 successfully prepared,
-started and stopped AVCHD HD_1080 / 25p / FH and created a 3,342,336-byte MTS file.
-A subsequent attempt failed at `startPreview`, before recorder configuration.
-These reports establish native SD recording access, while recorded dimensions
-were not checked by revision 2.
+Open **Fn → Settings → Video encoder test**. Opening the screen does not start
+a recording. Choose a button by touch/mouse click, or use **Left/Right** to select
+and **Center/Enter** to activate it.
 
-Revision 3 report `6AD00135.TXT` successfully started the fresh movie preview,
-prepared, started and stopped the same AVCHD profile, and created `00008.MTS`
-(4,227,072 bytes). The recorded clip's H.264 SPS declares **1920×1080**, producing
-**FHD_CLIP_HEADER**. The follow-up report `6AD00285.TXT` also completed preview,
-prepare, start and stop successfully, creating `00010.MTS` (4,128,768 bytes) with
-the same **1920×1080** SPS dimensions and **FHD_CLIP_HEADER** result. The preview
-failure seen with revision 2 did not recur in either supplied revision 3 report.
-These two runs confirm Full-HD dimensions in recorded video metadata; decoded
-frames, measured video frame rate and longer-term reliability have not been
-verified. The JPEG preview path remains separate. The tested
-StreamBuffer class was absent on that firmware, so direct RAM stream capture
-has not been established.
-
-Revision 4 report `6AD00534.TXT` returned from `start()`, but `stop()` and its
-cleanup retry both threw `IllegalStateException`. A 1,179,648-byte MTS file was
-visible after cleanup; no live file or bytes were observed before stop. Because
-recording did not complete normally, this is **inconclusive** for live access.
-It does not prove that a healthy recording's growing file is inaccessible.
-
-Revision 5 separates baseline and live-read modes and disables the V4
-stream-write listener in both, isolating live file reads as their difference.
-Both use `OnRecordListener` to log the raw `onStarted(boolean, recorder)` value
-and callback timing, `onStopped(recorder)`, and requested start/stop times. The
-boolean's undocumented meaning is not assumed. An unsolicited stop is treated
-as a recording error; an already confirmed native stop is not repeated. If a
-planned stop throws, the same stop call is not retried in cleanup, while native
-resource release is still attempted. Reports also include bounded exception
-stack details and activity/cancellation state. See the
-[record-state listener definition](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/media/MediaRecorder%24OnRecordListener.j).
-
-If the profile is retained after configuration, the test attempts to prepare,
-start and stop the native recorder using the SDK's default recording media.
-Revisions 4–5 record for six seconds; revisions 1–3 used
-two seconds. This can create a normal movie on the SD card, including audio
-if enabled by the native recorder. The diagnostic build declares microphone
-permission for native movie recording. Original recorder parameters are restored
-and camera resources released before returning to the live view.
-
-The result and each attempted native stage are written to
-**`<SD>/GHOSTBUF/PROBE/<8-hex-digits>.TXT`**. Known Sony movie folders are checked
-for newly created clips and their paths are included in the report. Reports use
-unique uppercase 8.3 names and are flushed before native calls, so a failed test
-can still leave information about its last attempted stage.
-
-Revision 3 also reads H.264 sequence parameter sets (SPS) from new AVCHD clips.
-It accounts for coded dimensions and cropping, distinguishes 1440×1080 from
-1920×1080, and supports 188-byte TS and 192-byte MTS packets. Inspection reads at
-most the first 4 MiB per clip (up to four new clips), with bounded buffers and
-cancellation checks. It does not invoke a native decoder or allocate full frames.
-
-Revision 4 tests a possible alternative to direct encoder memory: reading the
-growing AVCHD file from SD **while recording** and retaining its compressed bytes
-in a rolling **512 KiB RAM buffer**. It uses read-only file access, checks at
-100 ms intervals, and copies at most 256 KiB per interval. A separate bounded
-64 KiB prefix is inspected for H.264 SPS dimensions before recorder stop. The
-live reader closes before the test invokes native `stop()`; post-stop clip
-inspection is reported separately. Existing movies are excluded from live reads.
-
-The report contains a separate **Live SD access status**:
-
-| Status | Observation during recording |
+| On-screen button | Action |
 |---|---|
-| **LIVE_SD_FHD** | File growth and multiple live reads were observed, and the SPS read into RAM declared 1920×1080 before stop |
-| **LIVE_SD_FHD_HEADER** | A Full-HD SPS reached RAM before stop, but file growth with multiple reads was not established |
+| **Kontrolltest** | Attempt a six-second native recording without live file reads |
+| **Live-Test** | Attempt a six-second recording and read its growing SD movie into RAM |
+| **Zurück** | Return to the camera while idle |
+| **Abbrechen** | Cancel the running test and return |
+
+Start buttons are disabled during a run; the return button becomes **Abbrechen**.
+**Up/Down** scrolls the report. **Menu, Play, Delete or Back** cancels and returns.
+For repeatability checks, run **two control tests consecutively** before trying
+Live-Test. Save both control reports even if one fails.
+
+The JPEG camera connection is released before the test opens its own connection.
+The test chooses a firmware-reported Full-HD profile and reads it back before
+preparing the recorder. Progressive 24p/25p profiles are preferred. On the tested
+α5000 this selects **AVCHD / HD_1080 / 25p / FH / 16:9**. Sony uses `HD_1080` for
+both the Full-HD AVCHD profiles and the 1440×1080 MPEG4 profile on Scalar API 3;
+format and quality must be considered along with the size name. See
+[Sony's movie recording settings](https://helpguide.sony.net/gbmig/44879441/v1/en/contents/TP0000301880.html).
+
+A test can create a normal movie, including audio, in the camera's standard SD
+movie folders. The app declares microphone permission for native recording.
+Cleanup attempts to restore original recorder parameters and release native
+resources, recording any failures. Reports are saved to **`<SD>/GHOSTBUF/PROBE/<8-hex-digits>.TXT`** and
+include the app version, camera/firmware, Scalar API version, attempted stages,
+exceptions, callback times/threads, activity state and new clip paths. Report
+names use uppercase 8.3 format and stages are flushed before native calls.
+
+#### Current Revision: 7
+
+All native camera and recorder operations run on one dedicated event thread,
+including construction, configuration, preview, start/stop and release. A
+separate coordinator handles waits, reports and SD reads. This keeps timed
+recording waits from occupying the camera's event loop. Callback threading is
+recorded so it can be checked on hardware. The design follows Android's
+[single-event-thread camera guidance](https://developer.android.com/reference/android/hardware/Camera)
+and [recorder callback Looper requirements](https://developer.android.com/reference/android/media/MediaRecorder);
+Sony-specific reliability remains to be verified.
+
+When the record-state listener is available, both modes wait up to **two seconds**
+for `onStarted`. Live reads require that callback plus **500 ms** settling time.
+The live test predicts up to four next five-digit AVCHD filenames **before**
+recording and attempts read-only access to those exact paths every **250 ms**.
+It performs no directory enumeration during recording. Missing start confirmation
+skips live reads; missing predicted files do not establish a general access ban.
+
+Live reads retain at most **512 KiB** of compressed data in a rolling RAM buffer,
+with a separate **64 KiB** prefix for H.264 SPS inspection and at most **256 KiB**
+read per sampling interval. The live reader closes before native stop. Saved
+clips are inspected separately after cleanup, reading at most their first
+**4 MiB** to determine H.264 dimensions, including cropping. This does not decode
+frames or measure the actual video frame rate.
+
+The known native `StreamBuffer` API is checked independently. Its absence on the
+α5000 leaves direct encoder-to-RAM capture unavailable through that tested API.
+The app does not allocate an undocumented stream buffer when the API is present.
+The stream-write listener is disabled: its `onStarted`/`onCompleted` notifications
+carry a recorder reference, not encoded video bytes. API definitions are in the
+[OpenMemories recorder stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/media/MediaRecorder.j)
+and [stream-write listener stub](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/media/MediaRecorder%24OnStreamWriteListener.j).
+
+#### Reading Results
+
+| Recorder result | Meaning |
+|---|---|
+| **FHD_CLIP_HEADER** | A newly saved clip's H.264 SPS declares 1920×1080 |
+| **RECORDER_RAN** | Start/stop returned successfully; saved dimensions were not verified |
+| **CLIP_DIMENSIONS_MISMATCH** | Saved SPS dimensions differ from 1920×1080 |
+| **START_UNCONFIRMED** | No registered `onStarted` callback arrived within two seconds |
+| **UNAVAILABLE / NO_FHD_PROFILE / PROFILE_REJECTED** | Recorder API or a recognized/retained Full-HD profile was unavailable |
+| **ERROR / CANCELLED** | A stage failed or the run was cancelled; inspect its details |
+
+The **Live SD access status** is a separate observation:
+
+| Live status | Meaning before native stop |
+|---|---|
+| **LIVE_SD_FHD** | The file grew, multiple reads reached RAM, and its SPS declared 1920×1080 |
+| **LIVE_SD_FHD_HEADER** | A Full-HD SPS reached RAM, but growth with multiple reads was not established |
 | **LIVE_SD_OTHER_SIZE** | A readable SPS declared another size |
-| **LIVE_SD_BYTES** | Bytes reached RAM, but no SPS dimensions were verified in the bounded prefix |
-| **LIVE_FILE_VISIBLE** | A new movie file was visible, but no bytes could be read |
-| **NO_LIVE_FILE** | No new AVCHD file could be opened during the observation window |
-| **LIVE_SD_READ_ERROR** | Opening the live file failed; the report includes the error |
-| **NOT_STARTED** | Native recording did not reach the live-access phase |
+| **LIVE_SD_BYTES** | Bytes reached RAM; SPS dimensions were not verified |
+| **LIVE_FILE_VISIBLE** | A movie opened, but no bytes could be read |
+| **NO_LIVE_FILE** | No eligible predicted AVCHD path could be opened |
+| **LIVE_SD_READ_ERROR / NOT_STARTED** | Opening failed, or the live-access phase was not initialized |
 
-The report records live byte counts, first/last read times, visible file length,
-retained RAM bytes and CRC32, and any read error. **LIVE_SD_FHD is SD-mediated
-access, not direct encoder RAM access.** It does not establish a decodable
-pre-trigger clip, sustained real-time throughput, or complete ring-buffer
-functionality. A negative result only describes this bounded test and route.
-Revision 5 additionally reports **Live observation valid** and a separate
-**Live access conclusion**. A recording or cleanup failure or cancellation
-produces **INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED**, even if the observed
-file status is `NO_LIVE_FILE`. The raw observations are preserved.
+Always check **Live access conclusion**, **Live observation valid**, and
+**Live access phase entered** alongside byte counts. A failed/cancelled recording
+is **INCONCLUSIVE_RECORDING_FAILED_OR_CANCELLED**. Missing start confirmation is
+**INCONCLUSIVE_START_NOT_CONFIRMED**. Neither is evidence that healthy live video
+is unreadable. **LIVE_SD_FHD would confirm SD-mediated access, not direct encoder
+RAM access or an independently decodable pre-trigger clip.**
 
-The native StreamBuffer capability is reported independently. When its API is
-present, the probe does not allocate an undocumented buffer layout or claim
-that direct RAM capture worked. Revision 4 registered `OnStreamWriteListener`
-and counted its `onStarted`/`onCompleted` notifications. Revision 5 leaves this
-listener disabled in both comparison modes. Those
-callbacks receive the recorder, not encoded bytes; events alone never count as
-successful stream access. See the
-[OpenMemories listener definition](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/media/MediaRecorder%24OnStreamWriteListener.j).
+#### Hardware Evidence and Open Work
 
-**RECORDER_RAN** means start and stop returned successfully with an FHD profile.
-**FHD_CLIP_HEADER** additionally means a saved clip's H.264 SPS declares 1920×1080;
-**CLIP_DIMENSIONS_MISMATCH** means readable SPS dimensions differ from Full HD.
-Neither result verifies decoded frames or proves access to a RAM stream.
-Unreadable or missing clip metadata is reported explicitly and leaves the result
-at **RECORDER_RAN**. **UNAVAILABLE**, **NO_FHD_PROFILE**,
-**PROFILE_REJECTED**, **ERROR**, and **CANCELLED** identify the other outcomes;
-the report includes the native exception and stage when something fails.
-An output-media or prepare error does not establish a hardware resolution limit.
+Saved α5000 clips have repeatedly declared **1920×1080** in their SPS headers,
+including successful six-second controls. In five revision 6 reports, two control
+runs succeeded, two controls failed at native stop, and one live run failed
+before making any file-open attempt. Failed runs lacked `onStarted` and ended
+with the activity paused. Thus failures also occurred without live SD access.
 
-**Up/Down** scrolls the report, **Center/Left** runs Baseline, **Right** runs Live,
-and **Menu, Play,
-Delete or Back** cancels and returns. Native camera/encoder calls can take time
-to finish; cleanup runs before the display and parent camera are released.
-
-This probe does not allocate a guessed StreamBuffer layout or change firmware
-settings. API definitions are in the
-[OpenMemories MediaRecorder stubs](https://github.com/ma1co/OpenMemories-Framework/blob/master/stubs/src/main/jasmin/com/sony/scalar/media/MediaRecorder.j).
-A separate recording/streaming implementation is demonstrated by
-[pmca-livestream](https://github.com/Novex/pmca-livestream), tested on newer action
-cameras; that does not establish compatibility with the α5000.
+Revision 7 addresses the native event-thread arrangement, but its camera results
+are still pending. Reliable repeated recording, successful live reads, actual
+decoded video frames and a complete Full-HD pre-trigger buffer remain open.
+The independent [pmca-livestream project](https://github.com/Novex/pmca-livestream)
+demonstrates streaming on newer action cameras; this does not establish α5000
+compatibility.
 
 ### Gallery Mode
 
@@ -305,12 +304,15 @@ clock, since Sony's Android system clock may still show 1970.
 
 ### Manifest Schema (`MANIFEST.JSN`)
 
+Example values; actual app version, dimensions, frame rate and timing are recorded
+for each saved session.
+
 ```json
 {
   "version": 1,
-  "app_version": "1.0.0",
+  "app_version": "development-build",
   "camera_model": "ILCE-5000",
-  "camera_firmware": "1.10",
+  "camera_firmware": "1.00",
   "session_id": "6ACF9FF8",
   "created_at": "2026-10-14T15:30:00.123Z",
   "trigger_time_ms": 1791991800123,
@@ -338,54 +340,100 @@ clock, since Sony's Android system clock may still show 1970.
 ## Installation
 
 ### Method 1: Using PMCA GUI (Recommended)
-1. Download the latest `GhostBuffer-debug-*.apk` from the [Releases](https://github.com/CaskLabs/GhostBuffer/releases) page.
+
+1. Download [GhostBuffer-v1.1.apk](https://github.com/CaskLabs/GhostBuffer/releases/download/v1.1/GhostBuffer-v1.1.apk) from the [v1.1 release](https://github.com/CaskLabs/GhostBuffer/releases/tag/v1.1). Checksums are available in [SHA256SUMS.txt](https://github.com/CaskLabs/GhostBuffer/releases/download/v1.1/SHA256SUMS.txt).
 2. Download and launch [Sony-PMCA-RE GUI](https://github.com/ma1co/Sony-PMCA-RE/releases).
 3. Connect your camera via USB in "Mass Storage" mode.
 4. Select the "Install an app" tab, choose the downloaded APK file, and click "Install".
 
 ### Method 2: Command Line
+
+With [Sony-PMCA-RE](https://github.com/ma1co/Sony-PMCA-RE) available locally:
+
 ```bash
-python pmca-console.py install -f GhostBuffer-debug-*.apk
+python pmca-console.py install -f GhostBuffer-v1.1.apk
 ```
+
+For the current resolution picker and video diagnostics, install an APK built
+from the development source instead. Select its exact filename when installing;
+the published v1.1 APK does not include those later additions.
 
 ---
 
 ## Building from Source
 
 ### Requirements
+
 - **JDK 8** (OpenJDK 8 or Eclipse Temurin 8)
 - **Android SDK** with Platform 10 (Gingerbread 2.3.3) and Build Tools 25.0.2
+- **Git**, used to derive the APK version name and code
+
+Set `JAVA_HOME` to JDK 8 and `ANDROID_HOME` to the SDK directory, or set the SDK
+path in an untracked `local.properties` file (`sdk.dir=/path/to/android-sdk`).
+The repository includes a Gradle 3.3 wrapper and uses Android Gradle Plugin 2.2.3.
 
 ### Build Commands
+
 ```bash
-# Clone repository
 git clone https://github.com/CaskLabs/GhostBuffer.git
 cd GhostBuffer
 
-# Build debug APK
-./gradlew assembleDebug
+# Test, lint and build a debug APK
+./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
 
-# Output APK will be at:
-# app/build/outputs/apk/GhostBuffer-debug-*.apk
+# app/build/outputs/apk/GhostBuffer-debug-<git-version>.apk
 ```
 
 ### Running Automated Tests
+
 ```bash
-./gradlew testDebugUnitTest
+./gradlew --no-daemon testDebugUnitTest
 ```
+
+<details>
+<summary>Legacy dependency repository workaround</summary>
+
+The development APKs were also verified with **Gradle 2.14.1**, JDK 8 and the
+following init script to replace legacy JCenter requests with a mirror. If
+dependency resolution stalls at JCenter, save this as `repositories.gradle`:
+
+```groovy
+allprojects {
+    buildscript.repositories {
+        maven { url 'https://repo.maven.apache.org/maven2' }
+        maven { url 'https://maven.aliyun.com/repository/jcenter' }
+        whenObjectAdded { repo ->
+            if (repo.name == 'BintrayJCenter') remove(repo)
+        }
+    }
+    repositories {
+        maven { url 'https://repo.maven.apache.org/maven2' }
+        maven { url 'https://maven.aliyun.com/repository/jcenter' }
+        whenObjectAdded { repo ->
+            if (repo.name == 'BintrayJCenter') remove(repo)
+        }
+    }
+}
+```
+
+Run an installed Gradle 2.14.1 with that script:
+
+```bash
+gradle --no-daemon --console plain -I repositories.gradle testDebugUnitTest lintDebug assembleDebug
+```
+
+</details>
 
 ---
 
 ## Camera Compatibility
 
-Tested with GhostBuffer:
-- **Sony α5000 (ILCE-5000)**
+GhostBuffer has been tested on the **Sony α5000 (ILCE-5000)**. The native video
+reports discussed here came from **firmware 1.00, Scalar API 3, Android API 10**.
 
-Other PMCA-compatible models have not yet been tested with GhostBuffer. Compatibility and available controls may vary by model, firmware and lens. Examples of other PMCA-compatible cameras include:
-- α6000 (ILCE-6000)
-- α7 series (ILCE-7, ILCE-7R, ILCE-7S, ILCE-7M2)
-- RX100 series (DSC-RX100M2, M3, M4, M5)
-- NEX series (NEX-5R, NEX-5T, NEX-6)
+Other PMCA-compatible models may work but have not yet been tested with
+GhostBuffer. Available preview sizes, recorder APIs and exposure controls depend
+on the model, firmware and lens.
 
 ---
 
@@ -393,7 +441,7 @@ Other PMCA-compatible models have not yet been tested with GhostBuffer. Compatib
 
 - Uses Sony PMCA Scalar APIs provided by [OpenMemories: Framework](https://github.com/ma1co/OpenMemories-Framework).
 - Built with Gradle and Android Gradle Plugin 2.2.3.
-- Standard JUnit 4 test suite with 134 automated unit tests.
+- Standard JUnit 4 test suite with 151 automated unit tests.
 
 ---
 

@@ -10,6 +10,15 @@
     <string name="status_initializing">STARTING…</string>
     <string name="hint_camera">SHUTTER Save   PLAY Gallery   FN Settings   MENU Views</string>
     <string name="hint_gallery">◄ / ► Frame   ▲ / ▼ Capture   DEL Delete   PLAY Camera</string>
+    <string name="encoder_test_title">Videotests</string>
+    <string name="encoder_test_ready">Bereit – Test auswählen</string>
+    <string name="encoder_test_intro">Kontrolltest: sechs Sekunden Aufnahme ohne Live-Dateizugriffe.\n\nLive-Test: sechs Sekunden Aufnahme mit dem Versuch, Videodaten während der Aufnahme zu lesen.\n\nKlicke einen Test an oder wähle ihn mit Links/Rechts und bestätige mit der Mitteltaste. Berichte werden unter GHOSTBUF/PROBE gespeichert.</string>
+    <string name="encoder_test_baseline">Kontrolltest</string>
+    <string name="encoder_test_live">Live-Test</string>
+    <string name="encoder_test_back">Zurück</string>
+    <string name="encoder_test_cancel">Abbrechen</string>
+    <string name="encoder_test_navigation">Links/Rechts: Auswahl · Mitte: Bestätigen</string>
+    <string name="encoder_test_interrupted">Test unterbrochen – erneut auswählbar</string>
     <string name="gallery_empty">No captures yet\n\nSave a buffer in camera mode.\nPress Play to return.</string>
 
     <!-- PMCADemo Diagnostic Titles preserved -->
