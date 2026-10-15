@@ -2,7 +2,7 @@
 
 **GhostBuffer** is an open-source, pre-trigger rolling buffer camera application for Sony PlayMemories Camera Apps (PMCA) compatible cameras. It has been tested on the **Sony α5000 (ILCE-5000)**; other models have not yet been tested with GhostBuffer.
 
-> **Status (October 2026):** All 10 architectural and lifecycle remediations from the V1 review have been fully implemented and verified with 28 automated unit tests. The build produces a clean, runnable APK targeting Android 2.3.3 (Gingerbread API 10). See [V1 Review & Remediations](#v1-review--remediations) for detailed resolution of each finding.
+> **Status (October 2026):** GhostBuffer includes rolling capture, on-camera review, exposure controls and Sony SD-card storage support. The app targets Android 2.3.3 (API 10) and has been tested on the Sony α5000. Hardware behavior on other PMCA-compatible cameras remains unverified.
 
 ---
 
@@ -11,6 +11,16 @@
 Traditional cameras only begin recording after the shutter is pressed, often missing spontaneous, high-speed, or unpredictable moments (e.g., lightning strikes, wildlife actions, sports milestones).
 
 GhostBuffer solves this by maintaining a continuous rolling ring buffer in memory. The application polls the live preview stream at a target rate of 10 FPS, retaining up to **2000 ms (2 seconds)** in RAM. When you press the physical shutter button, the pre-trigger buffer is instantly frozen and persisted to your SD card.
+
+The native preview is requested at **640 × 480 pixels**. Captures contain individual JPEG preview frames, rather than full-resolution still photos or a video file. Actual frame rate and retained duration depend on the camera and JPEG sizes; the viewfinder shows the measured values.
+
+### Quick Start
+
+1. Install the APK using the [installation instructions](#installation), then launch **GhostBuffer** on the camera.
+2. Wait for **BUFFER ACTIVE** and let the buffer fill for about two seconds.
+3. Half-press the shutter to autofocus, then fully press it to save the preceding frames.
+4. Wait for saving to finish. Buffering resumes automatically after the saved-capture message (about 2.5 seconds).
+5. Press **Play** to review the capture. Use **Left / Right** for frames and **Up / Down** for capture sessions.
 
 ---
 
@@ -21,7 +31,7 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Strict byte-budget enforcement: rejects oversized incoming frames without corrupting the buffer, maintaining a 3 MiB JPEG payload budget and a 25-frame limit.
   - Time-window head eviction ensures oldest frames roll over seamlessly.
 
-- **Zero Shutter Lag & Latching:**
+- **Pre-Trigger Capture & Shutter Latching:**
   - Direct hardware shutter hook (`ISV_KEY_S2`).
   - Hardware repeat suppression prevents accidental multi-triggers when holding down the button.
   - Thread-safe snapshot freezing (`freezeSnapshot()`) decouples capture from background disk I/O.
@@ -31,10 +41,10 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
   - Frames are written to uppercase 8.3 temporary files, closed and renamed. Sync is used on supported filesystems; the Sony SD-card FUSE bridge does not implement it.
   - The JSON manifest is written as `MANIFEST.TMP`, closed and renamed to `MANIFEST.JSN`.
   - Complete session marker: a `COMPLETE` marker file ensures partial or interrupted sessions can be reliably identified.
-  - Incomplete session discovery: partial or damaged captures remain visible in the gallery with an `[INCOMPLETE]` warning indicator.
+  - Incomplete session discovery: partial or damaged captures remain visible in the gallery with an `INCOMPLETE` warning indicator.
 
 - **Live Viewfinder HUD:**
-  - Real-time status indicators (`BUFFER ACTIVE`, `SAVING...`, `CAPTURE SAVED`, `ERROR`, `PAUSED`).
+  - Real-time status indicators (`BUFFER ACTIVE`, `SAVING…`, `SAVED`, `ERROR`, `PAUSED`).
   - Simulation mode indicator (`[SIM]`) when running on non-hardware devices.
   - Rolling FPS calculation, frame count, and buffer time span (e.g. `2.0 s | 20 frames | 10.0 FPS`).
   - On-screen save progress indicator.
@@ -53,6 +63,7 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 
 - **Camera Menu:**
   - Pressing **Menu** opens a compact Camera / Gallery / Exposure menu. Legacy demo tools are hidden.
+  - Both the camera menu and exposure panel scroll to keep the selected item visible on compact camera displays.
 
 ---
 
@@ -66,12 +77,21 @@ GhostBuffer solves this by maintaining a continuous rolling ring buffer in memor
 | **Shutter (S1 - Half Press)** | Autofocus |
 | **Play** | Open GhostBuffer Gallery |
 | **Menu** | Open Camera / Gallery / Exposure menu |
-| **Fn / Center** | Open exposure controls; hold Fn for 0.8 seconds for the hardware probe |
+| **Fn / Center** | Open exposure controls; hold Fn for at least 0.8 seconds, then release for the hardware probe |
 | **Trash / Delete (SK2)** | Normal: Exit application / Error state: Discard snapshot & resume buffer |
+
+### Camera Menu
+
+Use **Up / Down** to select **Camera**, **Gallery** or **Exposure**, then press
+**Center** to open it. **Menu** returns to the camera, and **Play** opens the
+gallery directly. Menu entries can also be tapped on devices with touch input.
+Opening the menu or gallery pauses live buffering; returning to the camera
+starts a fresh buffer.
 
 ### Exposure Controls
 
-The exposure panel opens over the live view without opening a second camera.
+Open the exposure panel with **Fn / Center** in the viewfinder or select
+**Exposure** from the camera menu. It opens over the live view without opening a second camera.
 Use **Up / Down** to select a row, **Left / Right** to change its value and
 **Center** to restore automatic control (or neutral **0 EV**). **Fn, Menu,
 Play or Delete** closes the panel. Touch controls provide the same actions.
@@ -172,15 +192,25 @@ clock, since Sony's Android system clock may still show 1970.
 
 ## Installation
 
-### Method 1: Using PMCA GUI (Recommended)
-1. Download the latest `GhostBuffer-debug-*.apk` from the [Releases](https://github.com/CaskLabs/GhostBuffer/releases) page.
+Use a debug APK from the [Releases](https://github.com/CaskLabs/GhostBuffer/releases)
+page, when available, or [build one from source](#building-from-source).
+The repository also contains [GhostBuffer-sizing-debug.apk](GhostBuffer-sizing-debug.apk),
+a debug build for checking menu sizing on camera displays.
+
+### Method 1: Using PMCA GUI
+
+1. Obtain a GhostBuffer APK using one of the options above.
 2. Download and launch [Sony-PMCA-RE GUI](https://github.com/ma1co/Sony-PMCA-RE/releases).
 3. Connect your camera via USB in "Mass Storage" mode.
 4. Select the "Install an app" tab, choose the downloaded APK file, and click "Install".
 
 ### Method 2: Command Line
+
+Run this from a Sony-PMCA-RE checkout with its dependencies installed, replacing
+the APK path with the file you downloaded or built:
+
 ```bash
-python pmca-console.py install -f GhostBuffer-debug-*.apk
+python pmca-console.py install -f /path/to/GhostBuffer-debug.apk
 ```
 
 ---
@@ -190,6 +220,15 @@ python pmca-console.py install -f GhostBuffer-debug-*.apk
 ### Requirements
 - **JDK 8** (OpenJDK 8 or Eclipse Temurin 8)
 - **Android SDK** with Platform 10 (Gingerbread 2.3.3) and Build Tools 25.0.2
+- Network access for Gradle and Maven dependencies, including the OpenMemories snapshots from JitPack
+
+Use JDK 8 for this legacy build (Gradle 3.3 / Android Gradle Plugin 2.2.3).
+Set `JAVA_HOME` to that JDK and configure the Android SDK in an untracked
+`local.properties` file at the repository root:
+
+```properties
+sdk.dir=/absolute/path/to/android-sdk
+```
 
 ### Build Commands
 ```bash
@@ -205,9 +244,17 @@ cd GhostBuffer
 ```
 
 ### Running Automated Tests
+
 ```bash
 ./gradlew testDebugUnitTest
 ```
+
+The local JVM suite covers ring-buffer limits, capture state and retry handling,
+manifest serialization, capture writing and recovery, Sony 8.3 storage paths,
+frame-reader lifecycle, JPEG probes, exposure controls and gallery image sizing.
+It uses simulated preview frames; native Sony APIs, button handling and display
+layout also require checks on a physical camera. Test reports are written to
+`app/build/reports/tests/debug/index.html`.
 
 ---
 
@@ -227,8 +274,8 @@ Other PMCA-compatible models have not yet been tested with GhostBuffer. Compatib
 ## Framework & Dependencies
 
 - Uses Sony PMCA Scalar APIs provided by [OpenMemories: Framework](https://github.com/ma1co/OpenMemories-Framework).
-- Built with Gradle and Android Gradle Plugin 2.2.3.
-- Standard JUnit 4 test suite with 28 automated unit tests.
+- Built with Gradle 3.3 and Android Gradle Plugin 2.2.3.
+- Local JVM tests use JUnit 4.12 and `org.json`.
 
 ---
 
